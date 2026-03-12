@@ -1,0 +1,966 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users & Auth ───
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(SALES)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  permissions    UserPermission[]
+  assignedOrders Order[]          @relation("AssignedUser")
+  auditLogs      AuditLog[]
+  costsCreated   OrderCost[]
+  statusChanges  OrderStatusHistory[] @relation("ChangedBy")
+  filesUploaded  File[]
+
+  ownedProjects      Project[]          @relation("ProjectOwner")
+  assignedTasks      ProjectTask[]      @relation("TaskAssignee")
+  uploadedProjectFiles ProjectFile[]    @relation("ProjectFileUploader")
+  projectActivities  ProjectActivity[]  @relation("ProjectActivityCreator")
+  stickyNotes        StageStickyNote[]  @relation("StickyNoteCreator")
+  stageDocEdits      StageDocument[]    @relation("StageDocEditor")
+  stageFilesUploaded StageFile[]        @relation("StageFileUploader")
+  stageLinksCreated          StageLink[]                    @relation("StageLinkCreator")
+  stageMindMapEdits          StageMindMap[]                 @relation("StageMindMapEditor")
+  stageFlowchartEdits        StageFlowchart[]               @relation("StageFlowchartEditor")
+  stageTasksAssigned         StageTask[]                    @relation("StageTaskAssignee")
+  candidateSupplierFiles     ProjectCandidateSupplierFile[] @relation("CandidateSupplierFileUploader")
+  quotationFilesUploaded     QuotationFile[]                @relation("QuotationFileUploader")
+  capabilityWinnersSelected  CapabilityWinner[]             @relation("WinnerSelector")
+  clientDecisions            ProjectClientDecision[]        @relation("DecisionMaker")
+  clientApprovalFiles        ClientApprovalFile[]           @relation("ClientApprovalFileUploader")
+  clientApprovalStatusUpdates ClientApprovalStatus[]        @relation("ClientApprovalStatusUpdater")
+  clientApprovalNotes        ClientApprovalNote[]           @relation("ClientApprovalNoteCreator")
+
+  @@map("users")
+}
+
+model UserPermission {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  permissionKey String   @map("permission_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionKey])
+  @@map("user_permissions")
+}
+
+// ─── Audit ───
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── Customers ───
+
+model Customer {
+  id            String   @id @default(cuid())
+  customerCode  String   @unique @map("customer_code")
+  type          String   @default("FACTORY")
+  name          String
+  city          String?
+  googleMapsUrl String?  @map("google_maps_url")
+  notes         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  contacts CustomerContact[]
+  orders   Order[]
+  products CustomerProduct[]
+  projects Project[]          @relation("ProjectCustomer")
+
+  @@map("customers")
+}
+
+model CustomerContact {
+  id         String   @id @default(cuid())
+  customerId String   @map("customer_id")
+  name       String
+  role       String
+  phone      String
+  email      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_contacts")
+}
+
+// ─── Capabilities ───
+
+model Capability {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  factories Factory[]
+
+  @@map("capabilities")
+}
+
+// ─── Factories ───
+
+model Factory {
+  id           String   @id @default(cuid())
+  name         String
+  country      String
+  capabilityId String   @map("capability_id")
+  logo         String?
+  phone        String?
+  email        String?
+  website      String?
+  location     String?
+  notes        String?
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  capability Capability     @relation(fields: [capabilityId], references: [id])
+  contacts   VendorContact[]
+  products   Product[]
+  orders     Order[]
+
+  @@map("factories")
+}
+
+model VendorContact {
+  id        String   @id @default(cuid())
+  factoryId String   @map("factory_id")
+  name      String
+  role      String
+  wechatId  String   @map("wechat_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  factory Factory @relation(fields: [factoryId], references: [id], onDelete: Cascade)
+
+  @@map("vendor_contacts")
+}
+
+// ─── Product Categories ───
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  skuPrefix String   @unique @map("sku_prefix")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  subcategories ProductSubcategory[]
+  products      Product[]
+
+  @@map("product_categories")
+}
+
+model ProductSubcategory {
+  id         String   @id @default(cuid())
+  categoryId String   @map("category_id")
+  name       String
+  skuCode    String   @map("sku_code")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([categoryId, name])
+  @@unique([categoryId, skuCode])
+  @@map("product_subcategories")
+}
+
+// ─── Products ───
+
+model Product {
+  id             String   @id @default(cuid())
+  sku            String   @unique
+  nameAr         String?  @map("name_ar")
+  nameEn         String   @map("name_en")
+  categoryId     String   @map("category_id")
+  subcategoryId  String?  @map("subcategory_id")
+  factoryId      String?  @map("factory_id")
+  specs          Json?
+  notes          String?
+  inventory      Int      @default(0)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  category    ProductCategory     @relation(fields: [categoryId], references: [id])
+  subcategory ProductSubcategory? @relation(fields: [subcategoryId], references: [id])
+  factory     Factory?            @relation(fields: [factoryId], references: [id])
+  orders      Order[]
+  orderItems  OrderItem[]
+  customers   CustomerProduct[]
+
+  @@map("products")
+}
+
+model CustomerProduct {
+  id         String   @id @default(cuid())
+  customerId String   @map("customer_id")
+  productId  String   @map("product_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId])
+  @@map("customer_products")
+}
+
+// ─── Orders ───
+
+model Order {
+  id                   String    @id @default(cuid())
+  orderNumber          String    @unique @map("order_number")
+  factoryOrderNumber   String    @unique @map("factory_order_number")
+  orderType            String    @map("order_type")
+  customerId           String    @map("customer_id")
+  productId            String?   @map("product_id")
+  factoryId            String?   @map("factory_id")
+  status               String    @default("NEW")
+  assignedUserId       String?   @map("assigned_user_id")
+  expectedDeliveryDate DateTime? @map("expected_delivery_date")
+  shippingCompany      String?   @map("shipping_company")
+  trackingNumber       String?   @map("tracking_number")
+  trackingUrl          String?   @map("tracking_url")
+  internalNotes        String?   @map("internal_notes")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  completedAt          DateTime? @map("completed_at")
+
+  customer      Customer             @relation(fields: [customerId], references: [id])
+  product       Product?             @relation(fields: [productId], references: [id])
+  factory       Factory?             @relation(fields: [factoryId], references: [id])
+  assignedUser  User?                @relation("AssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+  costs         OrderCost[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([factoryId])
+  @@index([assignedUserId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String   @map("order_id")
+  productId String   @map("product_id")
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, productId])
+  @@map("order_items")
+}
+
+model OrderCost {
+  id        String   @id @default(cuid())
+  orderId   String   @map("order_id")
+  costType  String   @map("cost_type")
+  amount    Float
+  currency  String   @default("SAR")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  creator User  @relation(fields: [createdBy], references: [id])
+
+  @@map("order_costs")
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(cuid())
+  orderId   String   @map("order_id")
+  oldStatus String   @map("old_status")
+  newStatus String   @map("new_status")
+  changedBy String   @map("changed_by")
+  changedAt DateTime @default(now()) @map("changed_at")
+  note      String?
+
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changer User  @relation("ChangedBy", fields: [changedBy], references: [id])
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+// ─── Files ───
+
+model File {
+  id         String   @id @default(cuid())
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  fileType   String   @map("file_type")
+  fileName   String   @map("file_name")
+  fileUrl    String   @map("file_url")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  uploader User @relation(fields: [uploadedBy], references: [id])
+
+  @@index([entityType, entityId])
+  @@map("files")
+}
+
+// ─── Projects ───
+
+model Project {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  name           String
+  ownerUserId    String    @map("owner_user_id")
+  projectType    String    @default("CLIENT") @map("project_type")
+  customerId     String?   @map("customer_id")
+  status         String    @default("ACTIVE")
+  priority       String    @default("MEDIUM")
+  startDate      DateTime? @map("start_date")
+  targetDate     DateTime? @map("target_date")
+  tags           String[]  @default([])
+  summary        String?
+  successCriteria String?  @map("success_criteria")
+  includeVat     Boolean   @default(false) @map("include_vat")
+  quoteCurrency  String    @default("SAR") @map("quote_currency")
+  currentStageId String?   @unique @map("current_stage_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  closedAt       DateTime? @map("closed_at")
+
+  owner        User             @relation("ProjectOwner", fields: [ownerUserId], references: [id])
+  customer     Customer?        @relation("ProjectCustomer", fields: [customerId], references: [id])
+  currentStage ProjectStage?    @relation("CurrentStage", fields: [currentStageId], references: [id])
+  stages       ProjectStage[]   @relation("ProjectStages")
+  tasks        ProjectTask[]
+  contacts     ProjectContact[]
+  files        ProjectFile[]
+  activities          ProjectActivity[]
+  pinnedItems         ProjectPinnedItem[]
+  candidateSuppliers  ProjectCandidateSupplier[]
+  quotationCapabilities QuotationCapability[]
+  quotationFiles        QuotationFile[]
+  capabilityWinners     CapabilityWinner[]
+  clientQuote           ProjectClientQuote?
+  clientDecision        ProjectClientDecision?
+  clientApprovalFiles     ClientApprovalFile[]
+  clientApprovalPricing   ClientApprovalPricing[]
+  clientApprovalStatus    ClientApprovalStatus?
+  clientApprovalNotes     ClientApprovalNote[]
+  quoteComparisons        QuoteComparison[]
+
+  @@index([status])
+  @@index([ownerUserId])
+  @@index([customerId])
+  @@map("projects")
+}
+
+model ProjectStage {
+  id          String    @id @default(cuid())
+  projectId   String    @map("project_id")
+  name        String
+  stageKey    String    @default("CUSTOM") @map("stage_key")
+  orderIndex  Int       @map("order_index")
+  status      String    @default("NOT_STARTED")
+  notes       String?
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project             Project            @relation("ProjectStages", fields: [projectId], references: [id], onDelete: Cascade)
+  currentProject      Project?           @relation("CurrentStage")
+  tasks               ProjectTask[]
+  files               ProjectFile[]
+  stickyNotes         StageStickyNote[]
+  document            StageDocument?
+  mindMap             StageMindMap?
+  flowchart           StageFlowchart?
+  stageFiles          StageFile[]
+  stageTasks          StageTask[]
+  stageLinks          StageLink[]
+  candidateSuppliers  ProjectCandidateSupplier[]
+
+  @@unique([projectId, orderIndex])
+  @@index([projectId])
+  @@map("project_stages")
+}
+
+model StageStickyNote {
+  id              String   @id @default(cuid())
+  stageId         String   @map("stage_id")
+  title           String
+  content         String   @default("")
+  color           String   @default("yellow")
+  positionX       Int      @default(0) @map("position_x")
+  positionY       Int      @default(0) @map("position_y")
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  stage     ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("StickyNoteCreator", fields: [createdByUserId], references: [id])
+
+  @@index([stageId])
+  @@map("stage_sticky_notes")
+}
+
+model StageDocument {
+  id              String   @id @default(cuid())
+  stageId         String   @unique @map("stage_id")
+  content         Json     @default("{}")
+  updatedByUserId String?  @map("updated_by_user_id")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  stage     ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  updatedBy User?        @relation("StageDocEditor", fields: [updatedByUserId], references: [id])
+
+  @@map("stage_documents")
+}
+
+model StageMindMap {
+  id              String   @id @default(cuid())
+  stageId         String   @unique @map("stage_id")
+  content         Json     @default("{}")
+  updatedByUserId String?  @map("updated_by_user_id")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  stage     ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  updatedBy User?        @relation("StageMindMapEditor", fields: [updatedByUserId], references: [id])
+
+  @@map("stage_mind_maps")
+}
+
+model StageFlowchart {
+  id              String   @id @default(cuid())
+  stageId         String   @unique @map("stage_id")
+  content         Json     @default("{}")
+  updatedByUserId String?  @map("updated_by_user_id")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  stage     ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  updatedBy User?        @relation("StageFlowchartEditor", fields: [updatedByUserId], references: [id])
+
+  @@map("stage_flowcharts")
+}
+
+model StageFile {
+  id               String   @id @default(cuid())
+  stageId          String   @map("stage_id")
+  title            String
+  filePath         String   @map("file_path")
+  fileType         String   @map("file_type")
+  fileSize         Int?     @map("file_size")
+  uploadedByUserId String   @map("uploaded_by_user_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  stage      ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  uploadedBy User         @relation("StageFileUploader", fields: [uploadedByUserId], references: [id])
+
+  @@index([stageId])
+  @@map("stage_files")
+}
+
+model StageTask {
+  id             String    @id @default(cuid())
+  stageId        String    @map("stage_id")
+  title          String
+  description    String?
+  status         String    @default("TODO")
+  assigneeUserId String?   @map("assignee_user_id")
+  dueDate        DateTime? @map("due_date")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  completedAt    DateTime? @map("completed_at")
+
+  stage    ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  assignee User?        @relation("StageTaskAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+
+  @@index([stageId])
+  @@map("stage_tasks")
+}
+
+model StageLink {
+  id              String   @id @default(cuid())
+  stageId         String   @map("stage_id")
+  title           String
+  url             String
+  description     String?
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  stage     ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("StageLinkCreator", fields: [createdByUserId], references: [id])
+
+  @@index([stageId])
+  @@map("stage_links")
+}
+
+model ProjectPinnedItem {
+  id             String   @id @default(cuid())
+  projectId      String   @map("project_id")
+  itemType       String   @map("item_type")
+  itemId         String   @map("item_id")
+  pinnedLocation String   @map("pinned_location")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, itemType, itemId, pinnedLocation])
+  @@index([projectId])
+  @@map("project_pinned_items")
+}
+
+model ProjectCandidateSupplier {
+  id             String    @id @default(cuid())
+  projectId      String    @map("project_id")
+  stageId        String    @map("stage_id")
+  name           String
+  country        String?
+  capabilities   String[]  @default([])
+  contactPerson  String?   @map("contact_person")
+  wechatId       String?   @map("wechat_id")
+  whatsapp       String?
+  email          String?
+  website        String?
+  status         String    @default("NEW")
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage              ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  files              ProjectCandidateSupplierFile[]
+  quotationLinks     QuotationSupplier[]
+  capabilityWins     CapabilityWinner[]
+  quoteSuppliers     QuoteSupplier[]
+
+  @@index([projectId])
+  @@index([stageId])
+  @@map("project_candidate_suppliers")
+}
+
+model ProjectCandidateSupplierFile {
+  id               String   @id @default(cuid())
+  supplierId       String   @map("supplier_id")
+  title            String
+  filePath         String   @map("file_path")
+  fileType         String   @map("file_type")
+  fileSize         Int?     @map("file_size")
+  uploadedByUserId String   @map("uploaded_by_user_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  supplier   ProjectCandidateSupplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  uploadedBy User                     @relation("CandidateSupplierFileUploader", fields: [uploadedByUserId], references: [id])
+
+  @@index([supplierId])
+  @@map("project_candidate_supplier_files")
+}
+
+model ProjectTask {
+  id             String    @id @default(cuid())
+  projectId      String    @map("project_id")
+  stageId        String?   @map("stage_id")
+  title          String
+  description    String?
+  assigneeUserId String?   @map("assignee_user_id")
+  status         String    @default("TODO")
+  dueDate        DateTime? @map("due_date")
+  priority       String    @default("MEDIUM")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  completedAt    DateTime? @map("completed_at")
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage    ProjectStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  assignee User?         @relation("TaskAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  files    ProjectFile[]
+
+  @@index([projectId])
+  @@index([stageId])
+  @@index([assigneeUserId])
+  @@map("project_tasks")
+}
+
+model ProjectContact {
+  id              String    @id @default(cuid())
+  projectId       String    @map("project_id")
+  name            String
+  company         String?
+  country         String?
+  capability      String?
+  wechatId        String?   @map("wechat_id")
+  contactPerson   String?   @map("contact_person")
+  contactPosition String?   @map("contact_position")
+  whatsapp        String?
+  email           String?
+  website         String?
+  location        String?
+  lastContactAt   DateTime? @map("last_contact_at")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("project_contacts")
+}
+
+model ProjectFile {
+  id             String   @id @default(cuid())
+  projectId      String   @map("project_id")
+  stageId        String?  @map("stage_id")
+  taskId         String?  @map("task_id")
+  type           String
+  title          String
+  url            String
+  notes          String?
+  uploadedByUserId String @map("uploaded_by_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage      ProjectStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  task       ProjectTask?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  uploadedBy User          @relation("ProjectFileUploader", fields: [uploadedByUserId], references: [id])
+
+  @@index([projectId])
+  @@index([stageId])
+  @@map("project_files")
+}
+
+model ProjectActivity {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  eventType       String   @map("event_type")
+  message         String
+  metaJson        Json?    @map("meta_json")
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ProjectActivityCreator", fields: [createdByUserId], references: [id])
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("project_activities")
+}
+
+// ─── Quotation & Samples Workspace ───
+
+model QuotationCapability {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  stageId   String   @map("stage_id")
+  name      String
+  orderIndex Int     @default(0) @map("order_index")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project    Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  suppliers  QuotationSupplier[]
+  files      QuotationFile[]
+  attributes ComparisonAttribute[]
+  winner     CapabilityWinner?
+
+  @@unique([projectId, stageId, name])
+  @@index([projectId])
+  @@map("quotation_capabilities")
+}
+
+model QuotationSupplier {
+  id           String @id @default(cuid())
+  capabilityId String @map("capability_id")
+  candidateId  String @map("candidate_id")
+
+  capability QuotationCapability           @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  candidate  ProjectCandidateSupplier      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  files      QuotationFile[]
+  values     ComparisonValue[]
+
+  @@unique([capabilityId, candidateId])
+  @@index([capabilityId])
+  @@map("quotation_suppliers")
+}
+
+model QuotationFile {
+  id           String   @id @default(cuid())
+  projectId    String   @map("project_id")
+  capabilityId String   @map("capability_id")
+  supplierId   String   @map("supplier_id")
+  fileName     String   @map("file_name")
+  filePath     String   @map("file_path")
+  fileType     String   @map("file_type")
+  fileSize     Int?     @map("file_size")
+  uploadedByUserId String @map("uploaded_by_user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  capability QuotationCapability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  supplier   QuotationSupplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  uploadedBy User                @relation("QuotationFileUploader", fields: [uploadedByUserId], references: [id])
+
+  @@index([capabilityId, supplierId])
+  @@map("quotation_files")
+}
+
+model ComparisonAttribute {
+  id           String @id @default(cuid())
+  capabilityId String @map("capability_id")
+  name         String
+  orderIndex   Int    @default(0) @map("order_index")
+
+  capability QuotationCapability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  values     ComparisonValue[]
+
+  @@unique([capabilityId, name])
+  @@index([capabilityId])
+  @@map("comparison_attributes")
+}
+
+model ComparisonValue {
+  id          String @id @default(cuid())
+  attributeId String @map("attribute_id")
+  supplierId  String @map("supplier_id")
+  value       String @default("")
+
+  attribute ComparisonAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  supplier  QuotationSupplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([attributeId, supplierId])
+  @@map("comparison_values")
+}
+
+model CapabilityWinner {
+  id           String   @id @default(cuid())
+  projectId    String   @map("project_id")
+  capabilityId String   @unique @map("capability_id")
+  candidateId  String   @map("candidate_id")
+  selectedByUserId String @map("selected_by_user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  project    Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  capability QuotationCapability      @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  candidate  ProjectCandidateSupplier @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  selectedBy User                     @relation("WinnerSelector", fields: [selectedByUserId], references: [id])
+
+  @@index([projectId])
+  @@map("capability_winners")
+}
+
+// ─── Client Quotation & Decision ───
+
+model ProjectClientQuote {
+  id          String   @id @default(cuid())
+  projectId   String   @unique @map("project_id")
+  currency    String   @default("SAR")
+  quoteAmount Decimal? @map("quote_amount") @db.Decimal(14, 2)
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_client_quotes")
+}
+
+model ProjectClientDecision {
+  id              String    @id @default(cuid())
+  projectId       String    @unique @map("project_id")
+  status          String    @default("PENDING")
+  decisionAt      DateTime? @map("decision_at")
+  decidedByUserId String?   @map("decided_by_user_id")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  decidedBy User?   @relation("DecisionMaker", fields: [decidedByUserId], references: [id])
+
+  @@map("project_client_decisions")
+}
+
+// ─── Client Approval Workspace ───
+
+model ClientApprovalFile {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  fileName        String   @map("file_name")
+  filePath        String   @map("file_path")
+  fileType        String   @map("file_type")
+  fileSize        Int?     @map("file_size")
+  uploadedByUserId String  @map("uploaded_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("ClientApprovalFileUploader", fields: [uploadedByUserId], references: [id])
+
+  @@index([projectId])
+  @@map("client_approval_files")
+}
+
+model ClientApprovalPricing {
+  id        String  @id @default(cuid())
+  projectId String  @map("project_id")
+  itemName  String  @map("item_name")
+  amount    Decimal @db.Decimal(14, 2)
+  currency  String  @default("SAR")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("client_approval_pricing")
+}
+
+model ClientApprovalStatus {
+  id              String   @id @default(cuid())
+  projectId       String   @unique @map("project_id")
+  status          String   @default("DRAFT")
+  updatedByUserId String   @map("updated_by_user_id")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedBy User    @relation("ClientApprovalStatusUpdater", fields: [updatedByUserId], references: [id])
+
+  @@map("client_approval_statuses")
+}
+
+model ClientApprovalNote {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  content         String
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ClientApprovalNoteCreator", fields: [createdByUserId], references: [id])
+
+  @@index([projectId])
+  @@map("client_approval_notes")
+}
+
+// ─── Quote Comparison (Quotation & Samples v2) ───
+
+model QuoteComparison {
+  id               String   @id @default(cuid())
+  projectId        String   @map("project_id")
+  stageId          String   @map("stage_id")
+  capabilityName   String   @default("General") @map("capability_name")
+  capabilityNameAr String?  @map("capability_name_ar")
+  baseCurrency     String   @default("USD") @map("base_currency")
+  incoterm         String?
+  profitPercent    Decimal? @default(15) @map("profit_percent") @db.Decimal(5, 2)
+  conditions       String[] @default([]) @map("conditions")
+  orderIndex       Int      @default(0) @map("order_index")
+  imageUrl         String?  @map("image_url")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items     QuoteItem[]
+  suppliers QuoteSupplier[]
+
+  @@unique([projectId, stageId, capabilityName])
+  @@map("quote_comparisons")
+}
+
+model QuoteItem {
+  id                String   @id @default(cuid())
+  quoteComparisonId String   @map("quote_comparison_id")
+  itemName          String   @map("item_name")
+  itemNameAr        String?  @map("item_name_ar")
+  description       String?  @map("description")
+  targetQty         Int      @default(1) @map("target_qty")
+  unitLabel         String   @default("set") @map("unit_label")
+  baselineSpec      String?  @map("baseline_spec")
+  orderIndex        Int      @default(0) @map("order_index")
+  imageUrl          String?  @map("image_url")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  comparison QuoteComparison @relation(fields: [quoteComparisonId], references: [id], onDelete: Cascade)
+  lines      QuoteLine[]
+
+  @@index([quoteComparisonId])
+  @@map("quote_items")
+}
+
+model QuoteSupplier {
+  id                String    @id @default(cuid())
+  quoteComparisonId String    @map("quote_comparison_id")
+  candidateId       String?   @map("candidate_id")
+  supplierName      String    @map("supplier_name")
+  country           String?
+  quoteDate         DateTime? @map("quote_date")
+  validUntil        DateTime? @map("valid_until")
+  incoterm          String?
+  paymentTerms      String?   @map("payment_terms")
+  leadTimeDays      Int?      @map("lead_time_days")
+  warrantyYears     Int?      @map("warranty_years")
+  depositPercent    Decimal?  @map("deposit_percent") @db.Decimal(5, 2)
+  notes             String?
+  decision          String    @default("CANDIDATE")
+  decisionReason    String?   @map("decision_reason")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  comparison QuoteComparison          @relation(fields: [quoteComparisonId], references: [id], onDelete: Cascade)
+  candidate  ProjectCandidateSupplier? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  lines      QuoteLine[]
+
+  @@index([quoteComparisonId])
+  @@map("quote_suppliers")
+}
+
+model QuoteLine {
+  id              String   @id @default(cuid())
+  quoteSupplierId String   @map("quote_supplier_id")
+  quoteItemId     String   @map("quote_item_id")
+  qty             Int      @default(1)
+  unitPrice       Decimal? @map("unit_price") @db.Decimal(14, 2)
+  amount          Decimal? @db.Decimal(14, 2)
+  included        Boolean  @default(true)
+  remark          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  supplier QuoteSupplier @relation(fields: [quoteSupplierId], references: [id], onDelete: Cascade)
+  item     QuoteItem     @relation(fields: [quoteItemId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteSupplierId, quoteItemId])
+  @@map("quote_lines")
+}
+
+enum Role {
+  ADMIN
+  SALES
+}

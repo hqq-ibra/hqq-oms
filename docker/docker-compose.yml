@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hqq_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hqq
+      POSTGRES_PASSWORD: hqq_secret
+      POSTGRES_DB: hqq_oms
+    ports:
+      - "5434:5432"
+    volumes:
+      - hqq_pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: hqq_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@hqq.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+volumes:
+  hqq_pgdata:
