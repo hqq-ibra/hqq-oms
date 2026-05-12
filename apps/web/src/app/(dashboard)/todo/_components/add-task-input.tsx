@@ -25,14 +25,13 @@ export function AddTaskInput({ ownerPersonId }: { ownerPersonId: string }) {
   };
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white p-2 shadow-sm focus-within:border-[#DC2626] focus-within:ring-1 focus-within:ring-red-200">
-      <Plus className="h-5 w-5 shrink-0 text-gray-400" />
+    <div className="relative">
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
         placeholder="أضف مهمة جديدة..."
-        className="min-h-[36px] flex-1 bg-transparent text-sm text-gray-900 focus:outline-none"
+        className="block w-full rounded-lg border border-gray-300 bg-white py-3 ps-10 pe-3 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-[#DC2626] focus:outline-none focus:ring-1 focus:ring-red-200"
         maxLength={500}
         dir="auto"
       />
@@ -40,9 +39,10 @@ export function AddTaskInput({ ownerPersonId }: { ownerPersonId: string }) {
         type="button"
         onClick={submit}
         disabled={!value.trim() || mut.isPending}
-        className="inline-flex h-9 items-center rounded-md bg-[#DC2626] px-3 text-sm font-medium text-white shadow disabled:opacity-50"
+        className="absolute start-1 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+        aria-label="Add task"
       >
-        {mut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'أضف'}
+        {mut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-5 w-5" />}
       </button>
     </div>
   );

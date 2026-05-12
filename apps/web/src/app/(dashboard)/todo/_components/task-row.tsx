@@ -5,11 +5,16 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { GripVertical, ChevronDown, ChevronUp, Trash2, MessageSquare } from 'lucide-react';
+import { Trash2, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PriorityPill } from './priority-pill';
 import { TaskNotes } from './task-notes';
-import type { TodoPriority, TodoTask, TodoTasksResponse } from '../_types';
+import {
+  PRIORITY_COLOR,
+  type TodoPriority,
+  type TodoTask,
+  type TodoTasksResponse,
+} from '../_types';
 
 export function TaskRow({
   task,
@@ -68,46 +73,49 @@ export function TaskRow({
     setEditing(false);
   };
 
+  const priorityColor = PRIORITY_COLOR[task.priority].bg;
+
   return (
     <li
       ref={sortable ? sort.setNodeRef : undefined}
       style={style}
+      {...(sortable ? sort.attributes : {})}
+      {...(sortable ? sort.listeners : {})}
+      onClick={() => {
+        if (!editing) setExpanded((e) => !e);
+      }}
       className={cn(
-        'flex flex-col rounded-lg border bg-white shadow-sm transition',
-        task.isDone ? 'opacity-70 border-gray-200' : 'border-gray-300 hover:border-gray-400',
+        'group relative flex flex-col rounded-lg border bg-white shadow-sm transition touch-none select-none',
+        task.isDone ? 'opacity-70 border-gray-200' : 'border-gray-300 active:bg-gray-50',
+        sort.isDragging && 'shadow-lg',
       )}
     >
-      <div className="flex items-center gap-2 p-2">
-        {sortable && (
-          <button
-            type="button"
-            {...sort.attributes}
-            {...sort.listeners}
-            aria-label="Drag to reorder"
-            className="touch-none flex h-11 w-9 shrink-0 cursor-grab items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 active:cursor-grabbing"
-          >
-            <GripVertical className="h-5 w-5" />
-          </button>
-        )}
-
-        <PriorityPill
-          value={task.priority}
-          disabled={task.isDone}
-          onChange={(p) => patchMut.mutate({ priority: p })}
-        />
-
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="min-w-0 flex-1 cursor-pointer text-start"
+      {/* Main row */}
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        {/* Priority dot — tap to change */}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
+          <PriorityDot
+            value={task.priority}
+            disabled={task.isDone}
+            onChange={(p) => patchMut.mutate({ priority: p })}
+          />
+        </div>
+
+        {/* Title — full width, wraps */}
+        <div className="min-w-0 flex-1">
           {editing ? (
             <input
               autoFocus
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               onBlur={submitTitle}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
+                e.stopPropagation();
                 if (e.key === 'Enter') submitTitle();
                 if (e.key === 'Escape') {
                   setTitleDraft(task.title);
@@ -120,7 +128,7 @@ export function TaskRow({
           ) : (
             <span
               className={cn(
-                'block truncate text-sm',
+                'block text-sm leading-snug break-words',
                 task.isDone ? 'line-through text-gray-400' : 'text-gray-900',
               )}
               onDoubleClick={(e) => {
@@ -136,28 +144,27 @@ export function TaskRow({
               <MessageSquare className="h-3 w-3" /> {task._count.notes}
             </span>
           )}
-        </button>
+        </div>
 
+        {/* Checkbox — fixed right */}
         <input
           type="checkbox"
           checked={task.isDone}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onChange={(e) => patchMut.mutate({ isDone: e.target.checked })}
           aria-label={task.isDone ? 'Mark as not done' : 'Mark as done'}
           className="h-6 w-6 shrink-0 cursor-pointer rounded border-gray-300 text-[#DC2626] focus:ring-red-300"
         />
-
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="flex h-11 w-9 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </button>
       </div>
 
+      {/* Expanded: notes + delete */}
       {expanded && (
-        <div className="border-t border-gray-200 p-2">
+        <div
+          className="border-t border-gray-200 px-3 py-2"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <div className="flex justify-end">
             <button
               type="button"
@@ -166,12 +173,29 @@ export function TaskRow({
               }}
               className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50"
             >
-              <Trash2 className="h-3.5 w-3.5" /> حذف المهمة
+              <Trash2 className="h-3.5 w-3.5" /> حذف
             </button>
           </div>
           <TaskNotes task={task} ownerPersonId={ownerPersonId} />
         </div>
       )}
     </li>
+  );
+}
+
+// ─── Priority Dot: small colored circle that opens the priority picker ───
+
+function PriorityDot({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: TodoPriority;
+  onChange: (next: TodoPriority) => void;
+  disabled?: boolean;
+}) {
+  // Reuse the PriorityPill's picker but with a compact circle trigger.
+  return (
+    <PriorityPill value={value} onChange={onChange} disabled={disabled} compact />
   );
 }

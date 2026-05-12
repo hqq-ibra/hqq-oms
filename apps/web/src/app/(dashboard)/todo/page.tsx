@@ -45,8 +45,8 @@ export default function TodoPeoplePickerPage() {
   const people = data ?? [];
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="-mx-4 px-2 sm:mx-auto sm:px-0 sm:max-w-6xl">
+      <div className="mb-4 flex items-center justify-between sm:mb-6">
         <div className="flex items-center gap-3">
           <CheckSquare className="h-7 w-7 text-[#DC2626]" />
           <h1 className="text-2xl font-bold text-gray-900">To-Do</h1>

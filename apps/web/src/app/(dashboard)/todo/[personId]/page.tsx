@@ -112,8 +112,8 @@ export default function TodoTasksPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <div className="mb-4 flex items-center gap-3">
+    <div className="-mx-4 px-2 sm:mx-auto sm:px-0 sm:max-w-3xl">
+      <div className="mb-3 flex items-center gap-2">
         <Link
           href="/todo"
           className="inline-flex h-9 w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
@@ -121,13 +121,13 @@ export default function TodoTasksPage() {
         >
           <ArrowRight className="h-5 w-5 rtl:rotate-180" />
         </Link>
-        <h1 className="text-xl font-bold text-gray-900">مهام {data.owner.name}</h1>
+        <h1 className="text-lg font-bold text-gray-900 sm:text-xl">مهام {data.owner.name}</h1>
       </div>
 
       <AddTaskInput ownerPersonId={personId} />
 
-      <div className="mt-4">
-        <p className="mb-2 text-xs font-semibold text-gray-500">
+      <div className="mt-3">
+        <p className="mb-2 text-[11px] font-semibold text-gray-500">
           📌 المهام النشطة ({data.active.length})
         </p>
         {data.active.length === 0 ? (
@@ -137,7 +137,7 @@ export default function TodoTasksPage() {
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={data.active.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-              <ul className="space-y-2">
+              <ul className="space-y-1.5">
                 {data.active.map((t) => (
                   <TaskRow key={t.id} task={t} ownerPersonId={personId} />
                 ))}
