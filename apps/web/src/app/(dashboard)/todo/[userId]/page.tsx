@@ -1,0 +1,153 @@
+'use client';
+
+import * as React from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { ArrowRight, Loader2 } from 'lucide-react';
+import { api } from '@/lib/api';
+import { useSocketEvent } from '@/hooks/use-socket';
+import { AddTaskInput } from '../_components/add-task-input';
+import { TaskRow } from '../_components/task-row';
+import { DoneSection } from '../_components/done-section';
+import type { TodoTasksResponse } from '../_types';
+
+export default function TodoTasksPage() {
+  const { userId } = useParams<{ userId: string }>();
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['todo-tasks', userId],
+    queryFn: () => api.get<TodoTasksResponse>(`/api/v1/todo/users/${userId}/tasks`),
+  });
+
+  const invalidate = React.useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['todo-tasks', userId] });
+  }, [qc, userId]);
+
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.task.created',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.task.updated',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.task.deleted',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.tasks.reordered',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.note.created',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+  useSocketEvent<{ ownerUserId: string }>(
+    'todo.note.deleted',
+    (d) => d.ownerUserId === userId && invalidate(),
+    [userId, invalidate],
+  );
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  );
+
+  const reorderMut = useMutation({
+    mutationFn: (orderedIds: string[]) =>
+      api.post(`/api/v1/todo/users/${userId}/tasks/reorder`, { orderedIds }),
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: ['todo-tasks', userId] });
+      const prev = qc.getQueryData<TodoTasksResponse>(['todo-tasks', userId]);
+      if (prev) {
+        const indexMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+        const next: TodoTasksResponse = {
+          ...prev,
+          active: [...prev.active].sort(
+            (a, b) => (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0),
+          ),
+        };
+        qc.setQueryData(['todo-tasks', userId], next);
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['todo-tasks', userId], ctx.prev);
+    },
+    onSettled: invalidate,
+  });
+
+  const onDragEnd = (e: DragEndEvent) => {
+    if (!e.over || e.active.id === e.over.id || !data) return;
+    const oldIdx = data.active.findIndex((t) => t.id === e.active.id);
+    const newIdx = data.active.findIndex((t) => t.id === e.over!.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const reordered = arrayMove(data.active, oldIdx, newIdx).map((t) => t.id);
+    reorderMut.mutate(reordered);
+  };
+
+  if (isLoading || !data) {
+    return (
+      <div className="flex h-full items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-[#DC2626]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <div className="mb-4 flex items-center gap-3">
+        <Link
+          href="/todo"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          aria-label="Back"
+        >
+          <ArrowRight className="h-5 w-5 rtl:rotate-180" />
+        </Link>
+        <h1 className="text-xl font-bold text-gray-900">مهام {data.owner.name}</h1>
+      </div>
+
+      <AddTaskInput ownerUserId={userId} />
+
+      <div className="mt-4">
+        <p className="mb-2 text-xs font-semibold text-gray-500">
+          📌 المهام النشطة ({data.active.length})
+        </p>
+        {data.active.length === 0 ? (
+          <div className="rounded-lg border-2 border-dashed border-gray-300 py-8 text-center text-xs text-gray-400">
+            لا توجد مهام نشطة. ابدأ بإضافة مهمة من فوق ↑
+          </div>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={data.active.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+              <ul className="space-y-2">
+                {data.active.map((t) => (
+                  <TaskRow key={t.id} task={t} ownerUserId={userId} />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
+        )}
+      </div>
+
+      <DoneSection tasks={data.done} ownerUserId={userId} />
+    </div>
+  );
+}
