@@ -17,6 +17,7 @@ import {
   Menu,
   X,
   FolderKanban,
+  CheckSquare,
 } from 'lucide-react';
 
 const PERMISSIONS = {
@@ -48,6 +49,11 @@ const navSections: NavSection[] = [
   {
     items: [
       { href: '/projects', label: 'Projects', icon: FolderKanban },
+    ],
+  },
+  {
+    items: [
+      { href: '/todo', label: 'To-Do', icon: CheckSquare },
     ],
   },
   {
