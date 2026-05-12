@@ -44,6 +44,8 @@ model User {
   clientApprovalFiles        ClientApprovalFile[]           @relation("ClientApprovalFileUploader")
   clientApprovalStatusUpdates ClientApprovalStatus[]        @relation("ClientApprovalStatusUpdater")
   clientApprovalNotes        ClientApprovalNote[]           @relation("ClientApprovalNoteCreator")
+  todoTasks                  TodoTask[]                     @relation("TodoOwner")
+  todoNotes                  TodoTaskNote[]                 @relation("TodoNoteAuthor")
 
   @@map("users")
 }
@@ -958,6 +960,40 @@ model QuoteLine {
 
   @@unique([quoteSupplierId, quoteItemId])
   @@map("quote_lines")
+}
+
+// ─── To-Do ───
+
+model TodoTask {
+  id          String    @id @default(cuid())
+  ownerUserId String    @map("owner_user_id")
+  title       String
+  priority    String    @default("MEDIUM")
+  orderIndex  Int       @map("order_index")
+  isDone      Boolean   @default(false) @map("is_done")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  owner User           @relation("TodoOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  notes TodoTaskNote[]
+
+  @@index([ownerUserId, isDone, orderIndex])
+  @@map("todo_tasks")
+}
+
+model TodoTaskNote {
+  id              String   @id @default(cuid())
+  taskId          String   @map("task_id")
+  content         String
+  createdByUserId String?  @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  task      TodoTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("TodoNoteAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@map("todo_task_notes")
 }
 
 enum Role {
