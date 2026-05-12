@@ -11,6 +11,7 @@ import { OrdersModule } from './orders/orders.module';
 import { FilesModule } from './files/files.module';
 import { ReportsModule } from './reports/reports.module';
 import { ProjectsModule } from './projects/projects.module';
+import { TodoModule } from './todo/todo.module';
 import { WsModule } from './ws/ws.module';
 
 @Module({
@@ -26,6 +27,7 @@ import { WsModule } from './ws/ws.module';
     FilesModule,
     ReportsModule,
     ProjectsModule,
+    TodoModule,
     WsModule,
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
   ],
