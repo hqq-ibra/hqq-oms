@@ -22,6 +22,8 @@ export class PermissionsGuard implements CanActivate {
     const { user } = context.switchToHttp().getRequest<{ user: JwtUser }>();
     if (!user) throw new ForbiddenException('Unauthorized');
 
+    if (user.role === 'ADMIN') return true;
+
     const userPerms = new Set(user.permissions ?? []);
     const missing = requiredPermissions.filter((p) => !userPerms.has(p));
     if (missing.length > 0) {
