@@ -18,30 +18,52 @@ import { JwtUser } from '../auth/jwt.strategy';
 export class TodoController {
   constructor(private readonly todo: TodoService) {}
 
-  @Get('users')
-  listUsers() {
-    return this.todo.listUsersWithCounts();
+  // ─── People ───
+
+  @Get('people')
+  listPeople() {
+    return this.todo.listPeopleWithCounts();
   }
 
-  @Get('users/:userId/tasks')
-  listTasks(@Param('userId') userId: string) {
-    return this.todo.listTasksForUser(userId);
+  @Post('people')
+  createPerson(@Body() dto: { name: string; email?: string | null }) {
+    return this.todo.createPerson(dto);
   }
 
-  @Post('users/:userId/tasks')
+  @Patch('people/:personId')
+  updatePerson(
+    @Param('personId') personId: string,
+    @Body() dto: { name?: string; email?: string | null },
+  ) {
+    return this.todo.updatePerson(personId, dto);
+  }
+
+  @Delete('people/:personId')
+  deletePerson(@Param('personId') personId: string) {
+    return this.todo.deletePerson(personId);
+  }
+
+  // ─── Tasks ───
+
+  @Get('people/:personId/tasks')
+  listTasks(@Param('personId') personId: string) {
+    return this.todo.listTasksForPerson(personId);
+  }
+
+  @Post('people/:personId/tasks')
   createTask(
-    @Param('userId') userId: string,
+    @Param('personId') personId: string,
     @Body() dto: { title: string; priority?: string },
   ) {
-    return this.todo.createTask(userId, dto);
+    return this.todo.createTask(personId, dto);
   }
 
-  @Post('users/:userId/tasks/reorder')
+  @Post('people/:personId/tasks/reorder')
   reorder(
-    @Param('userId') userId: string,
+    @Param('personId') personId: string,
     @Body('orderedIds') orderedIds: string[],
   ) {
-    return this.todo.reorderTasks(userId, orderedIds);
+    return this.todo.reorderTasks(personId, orderedIds);
   }
 
   @Patch('tasks/:taskId')
@@ -56,6 +78,8 @@ export class TodoController {
   deleteTask(@Param('taskId') taskId: string) {
     return this.todo.deleteTask(taskId);
   }
+
+  // ─── Notes ───
 
   @Get('tasks/:taskId/notes')
   listNotes(@Param('taskId') taskId: string) {

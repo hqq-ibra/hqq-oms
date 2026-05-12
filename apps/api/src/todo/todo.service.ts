@@ -11,6 +11,8 @@ const PRIORITIES = ['HIGH', 'MEDIUM', 'LOW'] as const;
 type Priority = (typeof PRIORITIES)[number];
 const TITLE_MAX = 500;
 const NOTE_MAX = 2000;
+const NAME_MAX = 200;
+const EMAIL_MAX = 200;
 const NOTES_PREVIEW = 5;
 
 function normalizeTitle(raw: string): string {
@@ -36,6 +38,26 @@ function normalizePriority(raw?: string): Priority {
   return value as Priority;
 }
 
+function normalizeName(raw: string): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) throw new BadRequestException('Name is required');
+  if (trimmed.length > NAME_MAX)
+    throw new BadRequestException(`Name must be at most ${NAME_MAX} characters`);
+  return trimmed;
+}
+
+function normalizeEmail(raw?: string | null): string | null {
+  if (raw === undefined || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  if (trimmed.length > EMAIL_MAX)
+    throw new BadRequestException(`Email must be at most ${EMAIL_MAX} characters`);
+  // very light validation; not RFC-strict
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed))
+    throw new BadRequestException('Email is invalid');
+  return trimmed;
+}
+
 @Injectable()
 export class TodoService {
   constructor(
@@ -43,34 +65,73 @@ export class TodoService {
     private readonly wsGateway: WsGateway,
   ) {}
 
-  // ─── Users list (for page 1) ───
+  // ─── People (page 1) ───
 
-  async listUsersWithCounts() {
-    const users = await this.prisma.user.findMany({
-      where: { isActive: true },
+  async listPeopleWithCounts() {
+    const people = await this.prisma.todoPerson.findMany({
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true },
     });
     const counts = await this.prisma.todoTask.groupBy({
-      by: ['ownerUserId'],
+      by: ['ownerPersonId'],
       where: { isDone: false },
       _count: { _all: true },
     });
-    const countMap = new Map(counts.map((c) => [c.ownerUserId, c._count._all]));
-    return users.map((u) => ({ ...u, activeTaskCount: countMap.get(u.id) ?? 0 }));
+    const countMap = new Map(counts.map((c) => [c.ownerPersonId, c._count._all]));
+    return people.map((p) => ({ ...p, activeTaskCount: countMap.get(p.id) ?? 0 }));
   }
 
-  // ─── Tasks for a user (page 2) ───
+  async createPerson(dto: { name: string; email?: string | null }) {
+    const name = normalizeName(dto.name);
+    const email = normalizeEmail(dto.email);
+    const person = await this.prisma.todoPerson.create({
+      data: { name, email },
+    });
+    this.wsGateway.emit('todo.person.created', { personId: person.id });
+    return person;
+  }
 
-  async listTasksForUser(userId: string) {
-    const owner = await this.prisma.user.findUnique({
-      where: { id: userId },
+  async updatePerson(
+    personId: string,
+    dto: { name?: string; email?: string | null },
+  ) {
+    const existing = await this.prisma.todoPerson.findUnique({
+      where: { id: personId },
+    });
+    if (!existing) throw new NotFoundException('Person not found');
+    const data: Prisma.TodoPersonUpdateInput = {};
+    if (dto.name !== undefined) data.name = normalizeName(dto.name);
+    if (dto.email !== undefined) data.email = normalizeEmail(dto.email);
+    const updated = await this.prisma.todoPerson.update({
+      where: { id: personId },
+      data,
+    });
+    this.wsGateway.emit('todo.person.updated', { personId });
+    return updated;
+  }
+
+  async deletePerson(personId: string) {
+    const existing = await this.prisma.todoPerson.findUnique({
+      where: { id: personId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Person not found');
+    await this.prisma.todoPerson.delete({ where: { id: personId } });
+    this.wsGateway.emit('todo.person.deleted', { personId });
+    return { id: personId };
+  }
+
+  // ─── Tasks for a person (page 2) ───
+
+  async listTasksForPerson(personId: string) {
+    const owner = await this.prisma.todoPerson.findUnique({
+      where: { id: personId },
       select: { id: true, name: true, email: true },
     });
-    if (!owner) throw new NotFoundException('User not found');
+    if (!owner) throw new NotFoundException('Person not found');
 
     const tasks = await this.prisma.todoTask.findMany({
-      where: { ownerUserId: userId },
+      where: { ownerPersonId: personId },
       orderBy: [{ isDone: 'asc' }, { orderIndex: 'asc' }],
       include: {
         notes: {
@@ -97,32 +158,32 @@ export class TodoService {
     return { owner, active, done };
   }
 
-  // ─── Create ───
+  // ─── Create task ───
 
   async createTask(
-    ownerUserId: string,
+    ownerPersonId: string,
     dto: { title: string; priority?: string },
   ) {
-    const owner = await this.prisma.user.findUnique({
-      where: { id: ownerUserId },
+    const owner = await this.prisma.todoPerson.findUnique({
+      where: { id: ownerPersonId },
       select: { id: true },
     });
-    if (!owner) throw new NotFoundException('User not found');
+    if (!owner) throw new NotFoundException('Person not found');
 
     const title = normalizeTitle(dto.title);
     const priority = normalizePriority(dto.priority);
 
     const max = await this.prisma.todoTask.aggregate({
-      where: { ownerUserId, isDone: false },
+      where: { ownerPersonId, isDone: false },
       _max: { orderIndex: true },
     });
     const orderIndex = (max._max.orderIndex ?? -1) + 1;
 
     const task = await this.prisma.todoTask.create({
-      data: { ownerUserId, title, priority, orderIndex },
+      data: { ownerPersonId, title, priority, orderIndex },
     });
     this.wsGateway.emit('todo.task.created', {
-      ownerUserId,
+      ownerPersonId,
       taskId: task.id,
     });
     return task;
@@ -150,7 +211,7 @@ export class TodoService {
       } else {
         data.completedAt = null;
         const max = await this.prisma.todoTask.aggregate({
-          where: { ownerUserId: existing.ownerUserId, isDone: false },
+          where: { ownerPersonId: existing.ownerPersonId, isDone: false },
           _max: { orderIndex: true },
         });
         data.orderIndex = (max._max.orderIndex ?? -1) + 1;
@@ -162,23 +223,23 @@ export class TodoService {
       data,
     });
     this.wsGateway.emit('todo.task.updated', {
-      ownerUserId: existing.ownerUserId,
+      ownerPersonId: existing.ownerPersonId,
       taskId: updated.id,
     });
     return updated;
   }
 
-  // ─── Delete ───
+  // ─── Delete task ───
 
   async deleteTask(taskId: string) {
     const existing = await this.prisma.todoTask.findUnique({
       where: { id: taskId },
-      select: { id: true, ownerUserId: true },
+      select: { id: true, ownerPersonId: true },
     });
     if (!existing) throw new NotFoundException('Task not found');
     await this.prisma.todoTask.delete({ where: { id: taskId } });
     this.wsGateway.emit('todo.task.deleted', {
-      ownerUserId: existing.ownerUserId,
+      ownerPersonId: existing.ownerPersonId,
       taskId,
     });
     return { id: taskId };
@@ -186,23 +247,23 @@ export class TodoService {
 
   // ─── Reorder ───
 
-  async reorderTasks(ownerUserId: string, orderedIds: string[]) {
+  async reorderTasks(ownerPersonId: string, orderedIds: string[]) {
     if (!Array.isArray(orderedIds) || orderedIds.length === 0)
       throw new BadRequestException('orderedIds must be a non-empty array');
 
     const tasks = await this.prisma.todoTask.findMany({
-      where: { ownerUserId, isDone: false },
+      where: { ownerPersonId, isDone: false },
       select: { id: true },
     });
     const validIds = new Set(tasks.map((t) => t.id));
 
     if (orderedIds.length !== validIds.size)
       throw new BadRequestException(
-        `orderedIds must contain exactly the user's ${validIds.size} active tasks`,
+        `orderedIds must contain exactly the person's ${validIds.size} active tasks`,
       );
     for (const id of orderedIds) {
       if (!validIds.has(id))
-        throw new BadRequestException(`Task ${id} is not an active task of this user`);
+        throw new BadRequestException(`Task ${id} is not an active task of this person`);
     }
 
     await this.prisma.$transaction(
@@ -213,7 +274,7 @@ export class TodoService {
         }),
       ),
     );
-    this.wsGateway.emit('todo.tasks.reordered', { ownerUserId });
+    this.wsGateway.emit('todo.tasks.reordered', { ownerPersonId });
     return { ok: true };
   }
 
@@ -235,7 +296,7 @@ export class TodoService {
   async addNote(taskId: string, content: string, userId: string) {
     const task = await this.prisma.todoTask.findUnique({
       where: { id: taskId },
-      select: { id: true, ownerUserId: true },
+      select: { id: true, ownerPersonId: true },
     });
     if (!task) throw new NotFoundException('Task not found');
     const note = await this.prisma.todoTaskNote.create({
@@ -247,7 +308,7 @@ export class TodoService {
       include: { createdBy: { select: { id: true, name: true } } },
     });
     this.wsGateway.emit('todo.note.created', {
-      ownerUserId: task.ownerUserId,
+      ownerPersonId: task.ownerPersonId,
       taskId,
       noteId: note.id,
     });
@@ -257,12 +318,12 @@ export class TodoService {
   async deleteNote(noteId: string) {
     const note = await this.prisma.todoTaskNote.findUnique({
       where: { id: noteId },
-      include: { task: { select: { ownerUserId: true } } },
+      include: { task: { select: { ownerPersonId: true } } },
     });
     if (!note) throw new NotFoundException('Note not found');
     await this.prisma.todoTaskNote.delete({ where: { id: noteId } });
     this.wsGateway.emit('todo.note.deleted', {
-      ownerUserId: note.task.ownerUserId,
+      ownerPersonId: note.task.ownerPersonId,
       taskId: note.taskId,
       noteId,
     });

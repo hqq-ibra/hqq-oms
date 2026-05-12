@@ -44,7 +44,6 @@ model User {
   clientApprovalFiles        ClientApprovalFile[]           @relation("ClientApprovalFileUploader")
   clientApprovalStatusUpdates ClientApprovalStatus[]        @relation("ClientApprovalStatusUpdater")
   clientApprovalNotes        ClientApprovalNote[]           @relation("ClientApprovalNoteCreator")
-  todoTasks                  TodoTask[]                     @relation("TodoOwner")
   todoNotes                  TodoTaskNote[]                 @relation("TodoNoteAuthor")
 
   @@map("users")
@@ -964,21 +963,33 @@ model QuoteLine {
 
 // ─── To-Do ───
 
-model TodoTask {
-  id          String    @id @default(cuid())
-  ownerUserId String    @map("owner_user_id")
-  title       String
-  priority    String    @default("MEDIUM")
-  orderIndex  Int       @map("order_index")
-  isDone      Boolean   @default(false) @map("is_done")
-  completedAt DateTime? @map("completed_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+model TodoPerson {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  owner User           @relation("TodoOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  tasks TodoTask[]
+
+  @@map("todo_people")
+}
+
+model TodoTask {
+  id            String    @id @default(cuid())
+  ownerPersonId String    @map("owner_person_id")
+  title         String
+  priority      String    @default("MEDIUM")
+  orderIndex    Int       @map("order_index")
+  isDone        Boolean   @default(false) @map("is_done")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  owner TodoPerson     @relation(fields: [ownerPersonId], references: [id], onDelete: Cascade)
   notes TodoTaskNote[]
 
-  @@index([ownerUserId, isDone, orderIndex])
+  @@index([ownerPersonId, isDone, orderIndex])
   @@map("todo_tasks")
 }
 

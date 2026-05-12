@@ -23,46 +23,46 @@ import { DoneSection } from '../_components/done-section';
 import type { TodoTasksResponse } from '../_types';
 
 export default function TodoTasksPage() {
-  const { userId } = useParams<{ userId: string }>();
+  const { personId } = useParams<{ personId: string }>();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
-    queryKey: ['todo-tasks', userId],
-    queryFn: () => api.get<TodoTasksResponse>(`/api/v1/todo/users/${userId}/tasks`),
+    queryKey: ['todo-tasks', personId],
+    queryFn: () => api.get<TodoTasksResponse>(`/api/v1/todo/people/${personId}/tasks`),
   });
 
   const invalidate = React.useCallback(() => {
-    qc.invalidateQueries({ queryKey: ['todo-tasks', userId] });
-  }, [qc, userId]);
+    qc.invalidateQueries({ queryKey: ['todo-tasks', personId] });
+  }, [qc, personId]);
 
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.task.created',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.task.updated',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.task.deleted',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.tasks.reordered',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.note.created',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
-  useSocketEvent<{ ownerUserId: string }>(
+  useSocketEvent<{ ownerPersonId: string }>(
     'todo.note.deleted',
-    (d) => d.ownerUserId === userId && invalidate(),
-    [userId, invalidate],
+    (d) => d.ownerPersonId === personId && invalidate(),
+    [personId, invalidate],
   );
 
   const sensors = useSensors(
@@ -72,10 +72,10 @@ export default function TodoTasksPage() {
 
   const reorderMut = useMutation({
     mutationFn: (orderedIds: string[]) =>
-      api.post(`/api/v1/todo/users/${userId}/tasks/reorder`, { orderedIds }),
+      api.post(`/api/v1/todo/people/${personId}/tasks/reorder`, { orderedIds }),
     onMutate: async (orderedIds) => {
-      await qc.cancelQueries({ queryKey: ['todo-tasks', userId] });
-      const prev = qc.getQueryData<TodoTasksResponse>(['todo-tasks', userId]);
+      await qc.cancelQueries({ queryKey: ['todo-tasks', personId] });
+      const prev = qc.getQueryData<TodoTasksResponse>(['todo-tasks', personId]);
       if (prev) {
         const indexMap = new Map(orderedIds.map((id, idx) => [id, idx]));
         const next: TodoTasksResponse = {
@@ -84,12 +84,12 @@ export default function TodoTasksPage() {
             (a, b) => (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0),
           ),
         };
-        qc.setQueryData(['todo-tasks', userId], next);
+        qc.setQueryData(['todo-tasks', personId], next);
       }
       return { prev };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['todo-tasks', userId], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(['todo-tasks', personId], ctx.prev);
     },
     onSettled: invalidate,
   });
@@ -124,7 +124,7 @@ export default function TodoTasksPage() {
         <h1 className="text-xl font-bold text-gray-900">مهام {data.owner.name}</h1>
       </div>
 
-      <AddTaskInput ownerUserId={userId} />
+      <AddTaskInput ownerPersonId={personId} />
 
       <div className="mt-4">
         <p className="mb-2 text-xs font-semibold text-gray-500">
@@ -139,7 +139,7 @@ export default function TodoTasksPage() {
             <SortableContext items={data.active.map((t) => t.id)} strategy={verticalListSortingStrategy}>
               <ul className="space-y-2">
                 {data.active.map((t) => (
-                  <TaskRow key={t.id} task={t} ownerUserId={userId} />
+                  <TaskRow key={t.id} task={t} ownerPersonId={personId} />
                 ))}
               </ul>
             </SortableContext>
@@ -147,7 +147,7 @@ export default function TodoTasksPage() {
         )}
       </div>
 
-      <DoneSection tasks={data.done} ownerUserId={userId} />
+      <DoneSection tasks={data.done} ownerPersonId={personId} />
     </div>
   );
 }

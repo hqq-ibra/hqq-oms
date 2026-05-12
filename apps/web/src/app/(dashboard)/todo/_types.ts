@@ -1,10 +1,9 @@
 export type TodoPriority = 'HIGH' | 'MEDIUM' | 'LOW';
 
-export interface TodoUser {
+export interface TodoPerson {
   id: string;
   name: string;
-  email: string;
-  role: string;
+  email: string | null;
   activeTaskCount: number;
 }
 
@@ -19,7 +18,7 @@ export interface TodoNote {
 
 export interface TodoTask {
   id: string;
-  ownerUserId: string;
+  ownerPersonId: string;
   title: string;
   priority: TodoPriority;
   orderIndex: number;
@@ -32,7 +31,7 @@ export interface TodoTask {
 }
 
 export interface TodoTasksResponse {
-  owner: { id: string; name: string; email: string };
+  owner: { id: string; name: string; email: string | null };
   active: TodoTask[];
   done: TodoTask[];
 }

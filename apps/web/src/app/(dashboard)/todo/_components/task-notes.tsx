@@ -7,7 +7,7 @@ import { Loader2, Send, Trash2 } from 'lucide-react';
 import { formatRelative } from './format-time';
 import type { TodoNote, TodoTask } from '../_types';
 
-export function TaskNotes({ task, ownerUserId }: { task: TodoTask; ownerUserId: string }) {
+export function TaskNotes({ task, ownerPersonId }: { task: TodoTask; ownerPersonId: string }) {
   const qc = useQueryClient();
   const [showAll, setShowAll] = React.useState(false);
   const [draft, setDraft] = React.useState('');
@@ -21,7 +21,7 @@ export function TaskNotes({ task, ownerUserId }: { task: TodoTask; ownerUserId: 
   const notes = showAll && allQuery.data ? allQuery.data : task.notes;
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['todo-tasks', ownerUserId] });
+    qc.invalidateQueries({ queryKey: ['todo-tasks', ownerPersonId] });
     qc.invalidateQueries({ queryKey: ['todo-task-notes', task.id] });
   };
 

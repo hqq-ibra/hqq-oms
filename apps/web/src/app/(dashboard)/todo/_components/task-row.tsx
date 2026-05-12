@@ -13,11 +13,11 @@ import type { TodoPriority, TodoTask, TodoTasksResponse } from '../_types';
 
 export function TaskRow({
   task,
-  ownerUserId,
+  ownerPersonId,
   sortable = true,
 }: {
   task: TodoTask;
-  ownerUserId: string;
+  ownerPersonId: string;
   sortable?: boolean;
 }) {
   const qc = useQueryClient();
@@ -35,15 +35,15 @@ export function TaskRow({
     : {};
 
   const invalidate = () =>
-    qc.invalidateQueries({ queryKey: ['todo-tasks', ownerUserId] });
+    qc.invalidateQueries({ queryKey: ['todo-tasks', ownerPersonId] });
 
   const patchMut = useMutation({
     mutationFn: (dto: { title?: string; priority?: TodoPriority; isDone?: boolean }) =>
       api.patch(`/api/v1/todo/tasks/${task.id}`, dto),
     onMutate: async (dto) => {
-      await qc.cancelQueries({ queryKey: ['todo-tasks', ownerUserId] });
-      const prev = qc.getQueryData<TodoTasksResponse>(['todo-tasks', ownerUserId]);
-      qc.setQueryData<TodoTasksResponse>(['todo-tasks', ownerUserId], (old) => {
+      await qc.cancelQueries({ queryKey: ['todo-tasks', ownerPersonId] });
+      const prev = qc.getQueryData<TodoTasksResponse>(['todo-tasks', ownerPersonId]);
+      qc.setQueryData<TodoTasksResponse>(['todo-tasks', ownerPersonId], (old) => {
         if (!old) return old;
         const update = (list: TodoTask[]) =>
           list.map((t) => (t.id === task.id ? { ...t, ...dto } : t));
@@ -52,7 +52,7 @@ export function TaskRow({
       return { prev };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['todo-tasks', ownerUserId], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(['todo-tasks', ownerPersonId], ctx.prev);
     },
     onSettled: invalidate,
   });
@@ -169,7 +169,7 @@ export function TaskRow({
               <Trash2 className="h-3.5 w-3.5" /> حذف المهمة
             </button>
           </div>
-          <TaskNotes task={task} ownerUserId={ownerUserId} />
+          <TaskNotes task={task} ownerPersonId={ownerPersonId} />
         </div>
       )}
     </li>

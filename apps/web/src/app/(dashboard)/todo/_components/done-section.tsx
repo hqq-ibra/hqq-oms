@@ -7,10 +7,10 @@ import type { TodoTask } from '../_types';
 
 export function DoneSection({
   tasks,
-  ownerUserId,
+  ownerPersonId,
 }: {
   tasks: TodoTask[];
-  ownerUserId: string;
+  ownerPersonId: string;
 }) {
   const [open, setOpen] = React.useState(false);
   if (tasks.length === 0) return null;
@@ -29,7 +29,7 @@ export function DoneSection({
       {open && (
         <ul className="mt-2 space-y-2">
           {tasks.map((t) => (
-            <TaskRow key={t.id} task={t} ownerUserId={ownerUserId} sortable={false} />
+            <TaskRow key={t.id} task={t} ownerPersonId={ownerPersonId} sortable={false} />
           ))}
         </ul>
       )}

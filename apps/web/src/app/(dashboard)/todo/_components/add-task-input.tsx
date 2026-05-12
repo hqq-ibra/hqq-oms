@@ -6,16 +6,16 @@ import { api } from '@/lib/api';
 import { Plus, Loader2 } from 'lucide-react';
 import type { TodoTask } from '../_types';
 
-export function AddTaskInput({ ownerUserId }: { ownerUserId: string }) {
+export function AddTaskInput({ ownerPersonId }: { ownerPersonId: string }) {
   const qc = useQueryClient();
   const [value, setValue] = React.useState('');
 
   const mut = useMutation({
     mutationFn: (title: string) =>
-      api.post<TodoTask>(`/api/v1/todo/users/${ownerUserId}/tasks`, { title }),
+      api.post<TodoTask>(`/api/v1/todo/people/${ownerPersonId}/tasks`, { title }),
     onSuccess: () => {
       setValue('');
-      qc.invalidateQueries({ queryKey: ['todo-tasks', ownerUserId] });
+      qc.invalidateQueries({ queryKey: ['todo-tasks', ownerPersonId] });
     },
   });
 
