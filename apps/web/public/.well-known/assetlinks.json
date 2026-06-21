@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.hqq.oms",
+      "sha256_cert_fingerprints": [
+        "20:BD:DF:CA:A1:84:16:44:DA:68:AA:B3:64:20:DF:5E:32:FD:7E:F3:72:B2:A5:8E:BE:78:BF:FA:64:72:C9:B1"
+      ]
+    }
+  }
+]

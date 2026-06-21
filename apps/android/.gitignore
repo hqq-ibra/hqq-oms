@@ -1,0 +1,11 @@
+# Build artifacts
+.gradle/
+app/build/
+build/
+dist/
+local.properties
+
+# Signing material — KEEP SAFE, never commit. Back these up separately!
+*.keystore
+KEYSTORE-SECRET.txt
+*.apk.idsig
