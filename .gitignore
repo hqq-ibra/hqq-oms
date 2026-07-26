@@ -10,5 +10,8 @@ prisma/*.db
 backups/
 .superpowers/
 
+# Derived from brand/Company-Profile.pdf — regenerable, don't track
+brand/extracted/
+
 # TypeScript incremental build cache (build artifact, not source)
 *.tsbuildinfo

@@ -27,8 +27,12 @@ worth hundreds of thousands of riyals.
 - Lead specialty: **silicone molds and gaskets** for vacuum packing machines
 - Also: vacuum packing, AI sorting, waterless brush cleaning, complete production
   lines (maamoul, date paste, date syrup), cutting blades, film-pulling chains, spares
-- Partners: **ATRUM** (exclusive agency — dairy: butter, cheese, and wider food lines),
-  **JOYSORT** (date sorting)
+- **ATRUM — exclusive agency for the entire Arabian Gulf**, not Saudi Arabia alone.
+  Dairy and wider food lines: butter, cheese, and others. This is the single scarcest
+  credential HQQ has and it is regional, not national — the site must say Gulf everywhere.
+- **JOYSORT** — partner for AI date sorting
+- Eight customer logos published in the profile: الامتياز، الخماش، باسقات القصيم،
+  الأمين للتمور، رواد التمر، الطيار الفاخر، تمرا، ثمار النخبة
 - Contact: phone `0554807333`, WhatsApp `966554807333`, `hqq.ibra@gmail.com`
 - Seven named executed projects (see §9)
 
@@ -119,23 +123,41 @@ Arabic one.
 
 ## 7. Visual design
 
-**Thesis: «الخط لا يتوقف» / "The line doesn't stop."** A factory owner's real fear is
-downtime. Everything HQQ sells — gaskets, spares, support in two cities — is continuity.
+**Thesis: «منتجك القادم يبدأ من خط إنتاج.»** HQQ is a solutions source for factories —
+it sells complete production lines, not maintenance. The headline sells expansion and
+works equally for dates and for ATRUM's dairy lines. The primary CTA is
+«اطلب دراسة لمصنعك», not a price request, because a solutions supplier starts with a study.
 
-**Signature:** the tricolor ribbon from the logo becomes a line running the full page
-height along the reading edge, never breaking, with a pulse travelling it. Brand mark,
-promise, and production line in one device. It is the only decorative element; everything
-else stays disciplined.
+> An earlier draft used «الخط لا يتوقف» as the site thesis. That was wrong: it frames HQQ
+> as the spare-parts supplier. The line is excellent but belongs to one section — it is
+> now the heading of the **قطع الغيار** band, where downtime genuinely is the argument.
 
-**Color** (already present in `tailwind.config.ts`):
+**Ground: one unified deep navy across the entire page.** Section changes come from
+hairlines, spacing, and soft radial glows — never from flipping between light and dark.
+Alternating white and navy chops the page into disconnected blocks and puts a visible
+white rectangle around every photo.
+
+**One deliberate exception:** the customer logo wall sits on a single light panel. Those
+logos carry dark text and are illegible on navy. It reads as a credentials plate, which is
+what it is.
+
+**No line motif.** An earlier draft ran the tricolor as a straight edge-to-edge line, then
+as three swept strokes echoing the profile's corner ribbons. Both were rejected: the
+profile's ribbons taper and overlap like fabric, and three even strokes just read as three
+lines — worst of all on a narrow screen. Depth now comes from soft glows. If the ribbon
+motif returns it must be drawn as tapering filled shapes, and hidden below tablet width.
+
+**Color:**
 
 | Token | Value | Use |
 |---|---|---|
-| Brand red | `#DC2626` | CTAs only |
-| Brand green | `#22963A` | Exclusivity / verification marks only |
-| Brand blue | `#1E3F8B` | Structural, in the thread |
-| Ink | `#0B0F14` – `#1E2731` | Dark grounds |
-| Steel | `#EEF0F3` – `#B9C0C9` | Light surfaces |
+| Navy ground | `#0B1422` | The single page ground |
+| Navy surfaces | `#080E18` · `#111C2E` · `#16243A` | Deeper bands, cards, hovers |
+| Hairline | `#1E2E47` | All section and card separation |
+| Brand red | `#E03A2A` | CTAs and section tags only |
+| Brand green | `#2BA04A` | The ATRUM exclusivity mark only |
+| WhatsApp green | `#25D366` | WhatsApp actions only — not a brand colour |
+| Text | `#E9EEF5` · `#9DACBF` · `#6B7C92` | Primary, secondary, tertiary |
 
 **Type:** Noto Kufi Arabic (display, 800/900, tight tracking) · Readex Pro (body, 200–400)
 · IBM Plex Mono (machine data, capacities, model numbers). The app currently sets no font
@@ -143,27 +165,46 @@ at all. For English display, **Archivo** at 700/800 — a tight grotesque that h
 structural weight as Kufi at large sizes, so the two language versions read as one brand
 rather than a translation.
 
-**Composition:** the page alternates between dark full-bleed bands where lines *move*
-(video) and bright steel surfaces where parts sit *still* (product shots). That rhythm
-mirrors the business.
+**Numbers are display-scale.** The credibility band (25+ / 90+ / 2 / 1) sets its figures at
+48–76px in the mono face. At body scale they read as footnotes; the whole point is that a
+visitor absorbs them without reading a sentence. The fourth cell is **1 — وكالة ATRUM
+الحصرية للخليج العربي**, phrased as a numeral so all four share one rhythm.
 
-**Photography:** every existing photo is a white-background product shot. Until cutouts
-arrive, machines sit in a bright band cutting through the dark hero — a machine under a
-light strip in a dark plant. Once transparent PNGs exist, machines sit directly in the
-dark, edge-lit, and the plates are removed.
+**Photography — cutouts are mandatory on a dark ground.** Every source photo is a
+white-background studio shot, which cannot be blended into navy. Seven have been knocked
+out by flood-filling inward from the image borders, so interior whites (panel faces,
+machine highlights, silicone cavities) survive while the studio background goes, with a
+0.7px feather so edges don't look scissor-cut. They sit directly on the navy with a real
+drop shadow. **Two remain:** both chain photos were shot in a working environment
+(concrete floor, machine interior) and have no white to remove — they need manual cutting,
+or they stay as framed photographic panels, which is an acceptable texture contrast.
+
+**Verify machine identity against the profile before labelling.** Extraction order does not
+match visual order: the vacuum packer and the AI sorter were transposed for several drafts.
+The sorter is the multi-station line with a control screen; the vacuum packer is the long
+flat machine with a film reel.
 
 **Motion:** hero video loop; the thread draws on load and pulses; stat numbers count once;
 cards lift on hover. `prefers-reduced-motion` respected. Nothing else moves.
 
 ## 8. Pages
 
-**Home** — hero (thesis + exclusivity badge + CTAs) → live machine band → spec plate
-(25+ / 90+ / 2 branches / ATRUM) → dates sector → ATRUM dairy sector → projects ledger →
-closing CTA → footer.
+**Home** — hero (thesis + Gulf exclusivity badge + CTAs + cut-out machine) → credibility
+band → **الحلول** → **قطع الغيار** («الخط لا يتوقف») → **ATRUM** → **عملاؤنا** (logo wall)
+→ projects ledger → closing CTA → footer.
 
-**Solutions** — the five families: silicone molds & gaskets, vacuum packing, AI sorting,
-waterless brush cleaning, complete lines & consulting. Plus blades, film-pulling chains,
-and spares. Each with real specifications, not marketing copy.
+**الحلول** — **خطوط الإنتاج المتكاملة leads at full width**, because that is what HQQ
+sells; the rest follow as equals: vacuum packing, AI sorting, waterless brush cleaning,
+silicone molds & gaskets, date pitting. Every card carries real specifications.
+
+**قطع الغيار** — its own band with «الخط لا يتوقف» as the heading: cutting blades and
+knives, spare parts for all machines, film-pulling chains (الجنازير). This is recurring
+revenue and was missing entirely from the first drafts — a factory buys one packing
+machine and then buys consumables for years.
+
+**عملاؤنا** — the eight customer logos, cut apart from the profile page so they lay out
+individually. Named factories that chose HQQ outperform any sentence the site can write.
+Confirm none of the eight object to being listed publicly before launch.
 
 **Projects** — all seven named factories and what was delivered, presented as a manifest.
 
@@ -189,9 +230,24 @@ Presented as selected examples from a record of 90+ factories.
 
 ## 10. Lead capture
 
-Persistent WhatsApp and call actions (sticky on mobile). A short quote form — name,
-factory, city, phone, machine of interest, message — posting to a Next.js route handler
-that sends email. **No database write and no new public endpoint into the live DB.**
+**Both contact actions are native deep links, never displayed numbers.**
+
+| Action | Label | Link | Icon |
+|---|---|---|---|
+| WhatsApp | «تواصل على واتساب» | `https://wa.me/966554807333` | WhatsApp glyph, `#25D366` |
+| Call | «اتصل بنا» | `tel:+966554807333` | Handset glyph |
+
+A raw number printed as a button label is not a call to action — the visitor has to read
+it, remember it, switch apps and retype it. «اتصل بنا» with a handset icon opens the
+dialer on tap. Same rule on desktop: `tel:` still works, and the number belongs on the
+contact page as text, not on a button.
+
+On mobile both actions are pinned to the bottom of the viewport on every page, at 56px
+height. Reaching WhatsApp must never require scrolling.
+
+A short quote form — name, factory, city, phone, machine of interest, message — posts to a
+Next.js route handler that sends email. **No database write and no new public endpoint
+into the live DB.**
 
 Protections: honeypot field, per-IP rate limit, server-side validation, and a visible
 WhatsApp fallback if mail delivery fails.
@@ -267,7 +323,8 @@ Implementation can start without these; launch cannot finish without them.
 | Input | Blocks |
 |---|---|
 | Vector logo (`.svg`/`.ai`/`.eps`) | Crisp rendering at all sizes; favicon |
-| Machine photos with backgrounds removed (PNG, transparency) | The dark-ground treatment |
+| The two chain photos, cut out | The قطع الغيار band — the other seven are already done automatically; only these two were shot in a real environment |
+| Written confirmation of the Gulf-wide ATRUM agency scope | Every «الخليج العربي» claim on the site |
 | ATRUM logo, website, catalogue, line photos | The entire ATRUM section — no claims will be written about them unverified |
 | Four short videos (packer cycling, sorter running, hands fitting a gasket, ATRUM line) | Hero and sector bands |
 | Installation photos from customer factories | Projects page — the most persuasive images available |
