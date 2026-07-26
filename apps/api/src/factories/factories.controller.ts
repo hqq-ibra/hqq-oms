@@ -14,14 +14,15 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { FactoriesService } from './factories.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuditInterceptor } from '../common/interceptors/audit.interceptor';
 import { Audit } from '../common/decorators/audit.decorator';
+import { uploadsPath } from '../config/uploads';
 
-const UPLOADS_DIR = join(process.cwd(), 'uploads', 'logos');
+const UPLOADS_DIR = uploadsPath('logos');
 if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 
 @Controller('api/v1/factories')

@@ -22,8 +22,9 @@ import { AuditInterceptor } from '../common/interceptors/audit.interceptor';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtUser } from '../auth/jwt.strategy';
+import { uploadsPath } from '../config/uploads';
 
-const PRODUCT_FILES_DIR = join(process.cwd(), 'uploads', 'products');
+const PRODUCT_FILES_DIR = uploadsPath('products');
 if (!existsSync(PRODUCT_FILES_DIR)) mkdirSync(PRODUCT_FILES_DIR, { recursive: true });
 
 @Controller('api/v1/products')

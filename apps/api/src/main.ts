@@ -2,8 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
-import { join } from 'path';
 import { AppModule } from './app.module';
+import { UPLOADS_ROOT } from './config/uploads';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -17,7 +17,7 @@ async function bootstrap() {
       : true,
   });
 
-  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
+  app.useStaticAssets(UPLOADS_ROOT, { prefix: '/uploads' });
 
   const port =
     parseInt(process.env.PORT ?? process.env.API_PORT ?? '4000', 10) || 4000;

@@ -14,8 +14,9 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { uploadsPath } from '../config/uploads';
 import { ProjectsService } from './projects.service';
 import { StageWorkspaceService } from './stage-workspace.service';
 import { CandidateSupplierService } from './candidate-supplier.service';
@@ -315,7 +316,7 @@ export class ProjectsController {
       storage: diskStorage({
         destination: (req, _file, cb) => {
           const projectId = (req.params as { id: string }).id;
-          const dest = join(process.cwd(), 'uploads', 'projects', projectId);
+          const dest = uploadsPath('projects', projectId);
           if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
           cb(null, dest);
         },
@@ -505,7 +506,7 @@ export class ProjectsController {
       storage: diskStorage({
         destination: (req, _file, cb) => {
           const stageId = (req.params as { stageId: string }).stageId;
-          const dest = join(process.cwd(), 'uploads', 'stages', stageId);
+          const dest = uploadsPath('stages', stageId);
           if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
           cb(null, dest);
         },
@@ -778,7 +779,7 @@ export class ProjectsController {
       storage: diskStorage({
         destination: (req, _file, cb) => {
           const supplierId = (req.params as { supplierId: string }).supplierId;
-          const dest = join(process.cwd(), 'uploads', 'candidates', supplierId);
+          const dest = uploadsPath('candidates', supplierId);
           if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
           cb(null, dest);
         },
@@ -879,7 +880,7 @@ export class ProjectsController {
     FilesInterceptor('files', 10, {
       storage: diskStorage({
         destination: (_req, _file, cb) => {
-          const dir = join(process.cwd(), 'uploads', 'quotations', String(_req.params.capId));
+          const dir = uploadsPath('quotations', String(_req.params.capId));
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
@@ -1187,7 +1188,7 @@ export class ProjectsController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, _file, cb) => {
-          const dir = join(process.cwd(), 'uploads', 'quote-images');
+          const dir = uploadsPath('quote-images');
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
@@ -1223,7 +1224,7 @@ export class ProjectsController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, _file, cb) => {
-          const dir = join(process.cwd(), 'uploads', 'quote-images');
+          const dir = uploadsPath('quote-images');
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
@@ -1344,7 +1345,7 @@ export class ProjectsController {
       storage: diskStorage({
         destination: (req, _file, cb) => {
           const projectId = (req.params as { id: string }).id;
-          const dest = join(process.cwd(), 'uploads', 'client-approval', projectId);
+          const dest = uploadsPath('client-approval', projectId);
           if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
           cb(null, dest);
         },
