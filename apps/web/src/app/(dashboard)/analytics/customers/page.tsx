@@ -30,12 +30,12 @@ const SEGMENT_STYLE: Record<CustomerSegment, string> = {
 };
 
 export default function CustomerAnalyticsPage() {
-  const { data: segments, isLoading: loadingSegments } = useQuery({
+  const { data: segments, isLoading: loadingSegments, isError: errorSegments } = useQuery({
     queryKey: ['analytics', 'customers', 'segments'],
     queryFn: () => api.get<CustomerSegmentRow[]>('/api/v1/analytics/customers/segments'),
   });
 
-  const { data: breadth, isLoading: loadingBreadth } = useQuery({
+  const { data: breadth, isLoading: loadingBreadth, isError: errorBreadth } = useQuery({
     queryKey: ['analytics', 'customers', 'breadth'],
     queryFn: () => api.get<CustomerBreadthRow[]>('/api/v1/analytics/customers/breadth'),
   });
@@ -54,13 +54,14 @@ export default function CustomerAnalyticsPage() {
         {(['ACTIVE', 'AT_RISK', 'DORMANT', 'NEVER_ORDERED'] as CustomerSegment[]).map((s) => (
           <Card key={s}>
             <p className="text-xs text-gray-500">{s.replace('_', ' ')}</p>
-            <p className="text-2xl font-bold">{loadingSegments ? '—' : counts[s] ?? 0}</p>
+            <p className="text-2xl font-bold">{loadingSegments || errorSegments ? '—' : counts[s] ?? 0}</p>
           </Card>
         ))}
       </div>
 
       <Card title="Products per customer">
         {loadingBreadth ? <Loading className="min-h-0 py-8" />
+          : errorBreadth ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : linked.length === 0 ? <EmptyState reason="No customer is linked to a product yet." />
           : (
             <div className="overflow-x-auto">
@@ -86,6 +87,7 @@ export default function CustomerAnalyticsPage() {
 
       <Card title="Customer recency">
         {loadingSegments ? <Loading className="min-h-0 py-8" />
+          : errorSegments ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : rows.length === 0 ? <EmptyState reason="No customers found." />
           : (
             <div className="overflow-x-auto">

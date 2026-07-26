@@ -21,12 +21,12 @@ interface CatalogueHealth {
 }
 
 export default function StockAnalyticsPage() {
-  const { data: demand, isLoading: loadingDemand } = useQuery({
+  const { data: demand, isLoading: loadingDemand, isError: errorDemand } = useQuery({
     queryKey: ['analytics', 'stock', 'demand'],
     queryFn: () => api.get<ProductDemandRow[]>('/api/v1/analytics/stock/demand'),
   });
 
-  const { data: health } = useQuery({
+  const { data: health, isLoading: loadingHealth, isError: errorHealth } = useQuery({
     queryKey: ['analytics', 'stock', 'health'],
     queryFn: () => api.get<CatalogueHealth>('/api/v1/analytics/stock/catalogue-health'),
   });
@@ -38,14 +38,15 @@ export default function StockAnalyticsPage() {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card><p className="text-xs text-gray-500">Products</p><p className="text-2xl font-bold">{health?.totalProducts ?? '—'}</p></Card>
-        <Card><p className="text-xs text-gray-500">Customer links</p><p className="text-2xl font-bold">{health?.totalLinks ?? '—'}</p></Card>
-        <Card><p className="text-xs text-gray-500">No customer</p><p className="text-2xl font-bold text-amber-600">{health?.productsWithoutCustomer ?? '—'}</p></Card>
-        <Card><p className="text-xs text-gray-500">No drawing</p><p className="text-2xl font-bold text-red-600">{health?.productsWithoutDrawing ?? '—'}</p></Card>
+        <Card><p className="text-xs text-gray-500">Products</p><p className="text-2xl font-bold">{loadingHealth || errorHealth ? '—' : health?.totalProducts ?? '—'}</p></Card>
+        <Card><p className="text-xs text-gray-500">Customer links</p><p className="text-2xl font-bold">{loadingHealth || errorHealth ? '—' : health?.totalLinks ?? '—'}</p></Card>
+        <Card><p className="text-xs text-gray-500">No customer</p><p className="text-2xl font-bold text-amber-600">{loadingHealth || errorHealth ? '—' : health?.productsWithoutCustomer ?? '—'}</p></Card>
+        <Card><p className="text-xs text-gray-500">No drawing</p><p className="text-2xl font-bold text-red-600">{loadingHealth || errorHealth ? '—' : health?.productsWithoutDrawing ?? '—'}</p></Card>
       </div>
 
       <Card title="Stock gaps — wanted by 2+ customers, zero inventory">
         {loadingDemand ? <Loading className="min-h-0 py-8" />
+          : errorDemand ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : gaps.length === 0 ? <EmptyState reason="No stock gaps." hint="Every product wanted by two or more customers currently has inventory." />
           : (
             <div className="overflow-x-auto">
@@ -73,6 +74,7 @@ export default function StockAnalyticsPage() {
 
       <Card title="Demand vs stock">
         {loadingDemand ? <Loading className="min-h-0 py-8" />
+          : errorDemand ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : wanted.length === 0 ? <EmptyState reason="No products are linked to customers yet." hint="Link products to customers from the customer page to build demand data." />
           : (
             <div className="overflow-x-auto">
@@ -96,8 +98,9 @@ export default function StockAnalyticsPage() {
           )}
       </Card>
 
-      <Card title={loadingDemand ? 'Dead catalogue — no customer linked' : `Dead catalogue — no customer linked (${dead.length})`}>
+      <Card title={loadingDemand || errorDemand ? 'Dead catalogue — no customer linked' : `Dead catalogue — no customer linked (${dead.length})`}>
         {loadingDemand ? <Loading className="min-h-0 py-8" />
+          : errorDemand ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : dead.length === 0 ? <EmptyState reason="Every product is linked to at least one customer." />
           : (
             <div className="flex flex-wrap gap-2">

@@ -15,7 +15,7 @@ interface MonthlyMoneyRow {
 }
 
 export default function SalesAnalyticsPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['analytics', 'sales', 'monthly'],
     queryFn: () => api.get<MonthlyMoneyRow[]>('/api/v1/analytics/sales/monthly'),
   });
@@ -32,6 +32,16 @@ export default function SalesAnalyticsPage() {
   }));
 
   if (isLoading) return <Loading className="min-h-0 py-8" />;
+  if (isError) return (
+    <div className="space-y-6">
+      <Card title="Margin by month">
+        <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
+      </Card>
+      <Card title="Monthly costs">
+        <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
+      </Card>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -82,7 +92,9 @@ export default function SalesAnalyticsPage() {
                     <td className="px-4 py-2">{r.month}</td>
                     <td className="px-4 py-2">{r.currency}</td>
                     <td className="px-4 py-2 text-right">{r.cost.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right">{r.revenue.toFixed(2)}</td>
+                    <td className="px-4 py-2 text-right">
+                      {r.margin === null ? <span className="text-gray-400">—</span> : r.revenue.toFixed(2)}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       {r.margin === null ? <span className="text-gray-400">—</span> : r.margin.toFixed(2)}
                     </td>

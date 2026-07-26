@@ -10,19 +10,19 @@ interface OverdueOrderRow { orderId: string; orderNumber: string; customerName: 
 interface FactoryLeadTimeRow { factoryId: string; factoryName: string; orderCount: number; completedCount: number; averageLeadDays: number | null }
 
 export default function OperationsAnalyticsPage() {
-  const { data: dwell, isLoading: loadingDwell } = useQuery({
+  const { data: dwell, isLoading: loadingDwell, isError: errorDwell } = useQuery({
     queryKey: ['analytics', 'operations', 'dwell'],
     queryFn: () => api.get<StatusDwellRow[]>('/api/v1/analytics/operations/status-dwell'),
   });
-  const { data: cycles, isLoading: loadingCycles } = useQuery({
+  const { data: cycles, isLoading: loadingCycles, isError: errorCycles } = useQuery({
     queryKey: ['analytics', 'operations', 'cycles'],
     queryFn: () => api.get<CycleTimeRow[]>('/api/v1/analytics/operations/cycle-times'),
   });
-  const { data: overdue, isLoading: loadingOverdue } = useQuery({
+  const { data: overdue, isLoading: loadingOverdue, isError: errorOverdue } = useQuery({
     queryKey: ['analytics', 'operations', 'overdue'],
     queryFn: () => api.get<OverdueOrderRow[]>('/api/v1/analytics/operations/overdue'),
   });
-  const { data: factories, isLoading: loadingFactories } = useQuery({
+  const { data: factories, isLoading: loadingFactories, isError: errorFactories } = useQuery({
     queryKey: ['analytics', 'operations', 'factories'],
     queryFn: () => api.get<FactoryLeadTimeRow[]>('/api/v1/analytics/operations/factory-lead-times'),
   });
@@ -40,20 +40,21 @@ export default function OperationsAnalyticsPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <p className="text-xs text-gray-500">Completed orders</p>
-          <p className="text-2xl font-bold">{loadingCycles ? '—' : cycleRows.length}</p>
+          <p className="text-2xl font-bold">{loadingCycles || errorCycles ? '—' : cycleRows.length}</p>
         </Card>
         <Card>
           <p className="text-xs text-gray-500">Avg cycle (days)</p>
-          <p className="text-2xl font-bold">{loadingCycles ? '—' : avgCycle ?? '—'}</p>
+          <p className="text-2xl font-bold">{loadingCycles || errorCycles ? '—' : avgCycle ?? '—'}</p>
         </Card>
         <Card>
           <p className="text-xs text-gray-500">Overdue orders</p>
-          <p className="text-2xl font-bold text-red-600">{loadingOverdue ? '—' : (overdue ?? []).length}</p>
+          <p className="text-2xl font-bold text-red-600">{loadingOverdue || errorOverdue ? '—' : (overdue ?? []).length}</p>
         </Card>
       </div>
 
       <Card title="Where orders wait — average days per status">
         {loadingDwell ? <Loading className="min-h-0 py-8" />
+          : errorDwell ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : dwellRows.length === 0 ? <EmptyState reason="Not enough status history yet." hint="Bottlenecks appear once orders have moved through several statuses." />
           : (
             <div className="space-y-2">
@@ -72,6 +73,7 @@ export default function OperationsAnalyticsPage() {
 
       <Card title="Overdue orders">
         {loadingOverdue ? <Loading className="min-h-0 py-8" />
+          : errorOverdue ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : (overdue ?? []).length === 0 ? <EmptyState reason="No overdue orders." hint="Orders past their expected delivery date and not yet completed appear here." />
           : (
             <div className="overflow-x-auto">
@@ -97,6 +99,7 @@ export default function OperationsAnalyticsPage() {
 
       <Card title="Factory lead times">
         {loadingFactories ? <Loading className="min-h-0 py-8" />
+          : errorFactories ? <EmptyState reason="Couldn't load this data." hint="The server didn't respond. Refresh the page to try again." />
           : (factories ?? []).length === 0 ? <EmptyState reason="No factories recorded." />
           : (
             <div className="overflow-x-auto">
