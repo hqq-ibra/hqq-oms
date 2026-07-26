@@ -4,6 +4,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { StockService } from './stock.service';
 import { SalesService } from './sales.service';
+import { CustomersAnalyticsService } from './customers.service';
 
 @Controller('api/v1/analytics')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -12,6 +13,7 @@ export class AnalyticsController {
   constructor(
     private readonly stockService: StockService,
     private readonly salesService: SalesService,
+    private readonly customersService: CustomersAnalyticsService,
   ) {}
 
   @Get('stock/demand')
@@ -32,5 +34,15 @@ export class AnalyticsController {
   @Get('sales/monthly')
   getMonthlySales() {
     return this.salesService.getMonthlyMoney();
+  }
+
+  @Get('customers/breadth')
+  getCustomerBreadth() {
+    return this.customersService.getBreadth();
+  }
+
+  @Get('customers/segments')
+  getCustomerSegments() {
+    return this.customersService.getSegments();
   }
 }
