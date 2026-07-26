@@ -15,3 +15,5 @@ export { SearchableSelect } from './searchable-select';
 export type { SearchableSelectOption } from './searchable-select';
 export { Loading } from './loading';
 export { Card } from './card';
+export { EmptyState } from './empty-state';
+export type { EmptyStateProps } from './empty-state';
