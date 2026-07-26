@@ -3,7 +3,12 @@ import type { StatusDwellRow } from '../types';
 export interface RawStatusEntry {
   orderId: string;
   newStatus: string;
-  changedAt: string;
+  // Prisma's $queryRaw returns a native Date for a `changed_at` timestamp
+  // column in production, while unit tests (and any pre-serialized source)
+  // feed ISO strings. Accept both here for runtime honesty, matching
+  // RawCustomerRecency.lastOrderAt in lib/customers.ts; the sort/diff logic
+  // below is identical for either via new Date(...).
+  changedAt: string | Date;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -19,7 +24,7 @@ export function averageStatusDwell(entries: RawStatusEntry[]): StatusDwellRow[] 
   const totals = new Map<string, { days: number; samples: number }>();
 
   for (const list of byOrder.values()) {
-    list.sort((a, b) => a.changedAt.localeCompare(b.changedAt));
+    list.sort((a, b) => new Date(a.changedAt).getTime() - new Date(b.changedAt).getTime());
     for (let i = 0; i < list.length - 1; i++) {
       const days =
         (new Date(list[i + 1].changedAt).getTime() - new Date(list[i].changedAt).getTime()) /

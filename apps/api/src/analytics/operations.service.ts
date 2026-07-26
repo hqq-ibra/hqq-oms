@@ -3,6 +3,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { CycleTimeRow, FactoryLeadTimeRow, OverdueOrderRow, StatusDwellRow } from './types';
 import { averageStatusDwell, RawStatusEntry } from './lib/operations';
 
+// Prisma's $queryRaw returns a native Date for the `expected_delivery_date`
+// timestamp column in production. Type the raw result honestly here and
+// normalize it to the `string` wire contract OverdueOrderRow declares in
+// getOverdue() below, matching the RawCustomerRecency / RawStatusEntry
+// pattern used elsewhere in this module.
+interface RawOverdueOrderRow extends Omit<OverdueOrderRow, 'expectedDeliveryDate'> {
+  expectedDeliveryDate: string | Date;
+}
+
 @Injectable()
 export class OperationsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -32,7 +41,7 @@ export class OperationsService {
   }
 
   async getOverdue(): Promise<OverdueOrderRow[]> {
-    return this.prisma.$queryRaw<OverdueOrderRow[]>`
+    const rows = await this.prisma.$queryRaw<RawOverdueOrderRow[]>`
       SELECT o.id            AS "orderId",
              o.order_number  AS "orderNumber",
              c.name          AS "customerName",
@@ -45,6 +54,10 @@ export class OperationsService {
         AND o.expected_delivery_date < NOW()
       ORDER BY "daysOverdue" DESC
     `;
+    return rows.map((row) => ({
+      ...row,
+      expectedDeliveryDate: new Date(row.expectedDeliveryDate).toISOString(),
+    }));
   }
 
   async getFactoryLeadTimes(): Promise<FactoryLeadTimeRow[]> {
