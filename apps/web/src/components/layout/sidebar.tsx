@@ -58,7 +58,7 @@ const navSections: NavSection[] = [
   },
   {
     items: [
-      { href: '/reports', label: 'Reports', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
+      { href: '/analytics', label: 'Analytics', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
       { href: '/users', label: 'Users', icon: Shield },
     ],
   },
