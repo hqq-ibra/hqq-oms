@@ -23,8 +23,15 @@ export default function SalesAnalyticsPage() {
   const rows = data ?? [];
   const currencies = [...new Set(rows.map((r) => r.currency))];
   const hasRevenue = rows.some((r) => r.revenue > 0);
+  // Chart category label: plain month when only one currency is present (the
+  // common case), otherwise "month currency" so same-month bars from different
+  // currencies are never mistaken for one another. Never sums/merges values.
+  const chartRows = rows.map((r) => ({
+    ...r,
+    label: currencies.length > 1 ? `${r.month} ${r.currency}` : r.month,
+  }));
 
-  if (isLoading) return <Loading />;
+  if (isLoading) return <Loading className="min-h-0 py-8" />;
 
   return (
     <div className="space-y-6">
@@ -43,9 +50,9 @@ export default function SalesAnalyticsPage() {
         ) : (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows}>
+              <BarChart data={chartRows}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="month" fontSize={12} />
+                <XAxis dataKey="label" fontSize={12} />
                 <YAxis fontSize={12} />
                 <Tooltip />
                 <Bar dataKey="revenue" fill="#2563eb" name="Revenue" />
