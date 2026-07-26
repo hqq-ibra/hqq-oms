@@ -1110,7 +1110,10 @@ function ImportVendorsModal({ isOpen, onClose, projectId, stageId, existingNames
 
   const importMutation = useMutation({
     mutationFn: (factoryIds: string[]) =>
-      api.post(`/api/v1/projects/${projectId}/stages/${stageId}/candidates/import-vendors`, { factoryIds }),
+      api.post<{ factoryId: string; supplierId: string; name: string }[]>(
+        `/api/v1/projects/${projectId}/stages/${stageId}/candidates/import-vendors`,
+        { factoryIds },
+      ),
     onSuccess: (result: { factoryId: string; supplierId: string; name: string }[]) => {
       addToast(`${result.length} vendor${result.length !== 1 ? 's' : ''} imported`, 'success');
       setSelected(new Set());

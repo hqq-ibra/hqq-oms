@@ -827,7 +827,7 @@ function SupplierCard({
 }
 
 function MiniInput({ label, value, onChange, type = 'text' }: { label: string; value: string | number; onChange: (v: string) => void; type?: string }) {
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [local, setLocal] = useState(String(value));
   React.useEffect(() => { setLocal(String(value)); }, [value]);
   const commit = (v: string) => { if (timerRef.current) clearTimeout(timerRef.current); timerRef.current = setTimeout(() => onChange(v), 600); };

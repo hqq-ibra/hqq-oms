@@ -3,7 +3,10 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+// `title` is deliberately widened to ReactNode, so the DOM's string-only
+// title attribute must be omitted from the base type rather than conflict.
+export interface CardProps
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
   title?: React.ReactNode;
   footer?: React.ReactNode;
   children: React.ReactNode;

@@ -583,7 +583,11 @@ export default function FlowchartPanel({
 }) {
   const { addToast } = useToast();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rfRef = useRef<ReactFlowInstance | null>(null);
+  // Generics widened: only fitView and screenToFlowPosition are used, and both
+  // are viewport helpers independent of the node/edge types. The bare
+  // ReactFlowInstance defaults to <Node, Edge>, which this panel's custom node
+  // type is not assignable to.
+  const rfRef = useRef<ReactFlowInstance<any, any> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   // ── Fullscreen ──

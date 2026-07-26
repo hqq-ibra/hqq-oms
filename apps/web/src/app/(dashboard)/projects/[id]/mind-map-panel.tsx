@@ -531,7 +531,10 @@ export default function MindMapPanel({
 }) {
   const { addToast } = useToast();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rfRef = useRef<ReactFlowInstance | null>(null);
+  // Generics widened: only fitView is used, which is a viewport helper
+  // independent of the node/edge types. The bare ReactFlowInstance defaults to
+  // <Node, Edge>, which this panel's custom node type is not assignable to.
+  const rfRef = useRef<ReactFlowInstance<any, any> | null>(null);
 
   // ── Bootstrap ──
 

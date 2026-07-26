@@ -18,6 +18,10 @@ export interface User {
   id: string;
   email: string;
   name?: string;
+  /** Set by the API login/refresh response. ADMIN bypasses per-permission checks. */
+  role?: string;
+  /** Flattened to permission keys by the API (auth.service maps permissionKey). */
+  permissions?: string[];
   [key: string]: unknown;
 }
 

@@ -66,10 +66,27 @@ const navSections: NavSection[] = [
   },
 ];
 
-function hasPermission(user: { permissions?: string[] } | null, permission?: string): boolean {
+function hasPermission(
+  user: { role?: string; permissions?: unknown } | null,
+  permission?: string,
+): boolean {
   if (!permission) return true;
-  if (!user?.permissions || !Array.isArray(user.permissions)) return false;
-  return user.permissions.includes(permission);
+
+  // Mirror the API's PermissionsGuard, which lets ADMIN through without needing
+  // explicit permission rows.
+  if (user?.role === 'ADMIN') return true;
+
+  // The login response includes the raw UserPermission rows, so this array
+  // holds objects like { permissionKey: 'VIEW_REPORTS' }, not strings — only
+  // the JWT payload is flattened. Comparing an object to a string silently
+  // hides every gated nav item, which is what happened to Reports/Analytics.
+  const raw = user?.permissions;
+  if (!Array.isArray(raw)) return false;
+  return raw.some((p) =>
+    typeof p === 'string'
+      ? p === permission
+      : (p as { permissionKey?: string })?.permissionKey === permission,
+  );
 }
 
 export interface SidebarProps {
