@@ -8,6 +8,7 @@ coverage/
 .turbo/
 prisma/*.db
 backups/
+.superpowers/
 
 # TypeScript incremental build cache (build artifact, not source)
 *.tsbuildinfo
