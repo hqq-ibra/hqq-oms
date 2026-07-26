@@ -55,7 +55,7 @@ export default function SalesAnalyticsPage() {
         {!hasRevenue ? (
           <EmptyState
             reason="No selling prices recorded."
-            hint="Add a SELLING_PRICE cost to an order to see revenue and margin here. Until then only costs can be reported."
+            hint="Open any order, and in its Costs section add an entry with type “Selling Price”. Revenue and margin appear here once at least one is recorded — until then only costs can be reported."
           />
         ) : (
           <div className="h-72">

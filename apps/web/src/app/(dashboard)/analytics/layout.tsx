@@ -22,6 +22,7 @@ export default function AnalyticsLayout({ children }: { children: React.ReactNod
           <Link
             key={tab.href}
             href={tab.href}
+            aria-current={pathname === tab.href ? 'page' : undefined}
             className={cn(
               'whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors',
               pathname === tab.href
