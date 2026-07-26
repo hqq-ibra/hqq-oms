@@ -10,6 +10,7 @@ import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
 import { FilesModule } from './files/files.module';
 import { ReportsModule } from './reports/reports.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { ProjectsModule } from './projects/projects.module';
 import { TodoModule } from './todo/todo.module';
 import { WsModule } from './ws/ws.module';
@@ -26,6 +27,7 @@ import { WsModule } from './ws/ws.module';
     OrdersModule,
     FilesModule,
     ReportsModule,
+    AnalyticsModule,
     ProjectsModule,
     TodoModule,
     WsModule,
