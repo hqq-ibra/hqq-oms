@@ -96,8 +96,9 @@ export default function StockAnalyticsPage() {
           )}
       </Card>
 
-      <Card title={`Dead catalogue — no customer linked (${dead.length})`}>
-        {dead.length === 0 ? <EmptyState reason="Every product is linked to at least one customer." />
+      <Card title={loadingDemand ? 'Dead catalogue — no customer linked' : `Dead catalogue — no customer linked (${dead.length})`}>
+        {loadingDemand ? <Loading className="min-h-0 py-8" />
+          : dead.length === 0 ? <EmptyState reason="Every product is linked to at least one customer." />
           : (
             <div className="flex flex-wrap gap-2">
               {dead.map((r) => (
