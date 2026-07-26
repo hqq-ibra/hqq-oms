@@ -3,8 +3,8 @@ from PIL import Image
 import base64, io, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-C = r'C:\Users\Lenovo\Desktop\Claude App\hqq-oms\.superpowers\brainstorm\1715-1785073632\content'
-OUT = r'C:\Users\Lenovo\Desktop\Claude App\hqq-oms\brand\site-preview.html'
+C = os.path.join(HERE, 'preview-assets')
+OUT = os.path.join(HERE, 'site-preview.html')
 NAVY = (5, 14, 27)      # --g0, the card image ground
 PANEL = (243, 245, 248)  # the light customer-logo panel
 
@@ -63,8 +63,8 @@ for key, (src, w, fmt, q, bg) in JOBS.items():
     imgs[key] = uri
     total += n
 
-html = io.open(os.path.join(HERE, 'template.html'), encoding='utf-8').read()
-html = html.replace('{{FONTS}}', io.open(os.path.join(HERE, 'fonts.css'), encoding='utf-8').read())
+html = io.open(os.path.join(HERE, 'preview-template.html'), encoding='utf-8').read()
+html = html.replace('{{FONTS}}', io.open(os.path.join(HERE, 'preview-fonts.css'), encoding='utf-8').read())
 html = html.replace('{{WA}}', WA).replace('{{TEL}}', TEL)
 for k, v in imgs.items():
     html = html.replace('{{IMG:%s}}' % k, v)
