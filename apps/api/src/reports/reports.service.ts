@@ -1,28 +1,37 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+export interface MonthlyCostRow {
+  month: string;
+  currency: string;
+  totalCost: number;
+  costCount: number;
+}
+
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getMonthlyProfit() {
-    const costs = await this.prisma.orderCost.findMany();
-
-    const byMonth: Record<string, { total: number; count: number }> = {};
-    for (const cost of costs) {
-      const month = new Date(cost.createdAt).toISOString().slice(0, 7);
-      if (!byMonth[month]) byMonth[month] = { total: 0, count: 0 };
-      byMonth[month].total += cost.amount;
-      byMonth[month].count += 1;
-    }
-
-    return Object.entries(byMonth)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, { total, count }]) => ({
-        month,
-        totalCost: total,
-        costCount: count,
-      }));
+  /**
+   * Monthly spend, grouped by currency.
+   *
+   * This was previously called "monthly profit" and summed every row in
+   * order_costs. That was wrong in three ways: SELLING_PRICE is a CostType, so
+   * revenue was added to the cost total; amounts in SAR, USD and CNY were added
+   * together despite no exchange rate existing anywhere; and the result was
+   * labelled profit when it is spend.
+   */
+  async getMonthlyCosts(): Promise<MonthlyCostRow[]> {
+    return this.prisma.$queryRaw<MonthlyCostRow[]>`
+      SELECT to_char(oc.created_at, 'YYYY-MM') AS "month",
+             oc.currency                       AS "currency",
+             SUM(oc.amount)::float8            AS "totalCost",
+             COUNT(*)::int                     AS "costCount"
+      FROM order_costs oc
+      WHERE oc.cost_type <> 'SELLING_PRICE'
+      GROUP BY 1, 2
+      ORDER BY 1 ASC, 2 ASC
+    `;
   }
 
   async getOrdersPerformance() {

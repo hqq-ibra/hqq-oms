@@ -10,9 +10,9 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
-  @Get('monthly-profit')
-  getMonthlyProfit() {
-    return this.reportsService.getMonthlyProfit();
+  @Get('monthly-costs')
+  getMonthlyCosts() {
+    return this.reportsService.getMonthlyCosts();
   }
 
   @Get('orders-performance')

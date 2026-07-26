@@ -9,8 +9,9 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { Permission } from '@/lib/types';
 import Link from 'next/link';
 
-interface MonthlyProfitRow {
+interface MonthlyCostRow {
   month: string;
+  currency: string;
   totalCost: number;
   costCount: number;
 }
@@ -61,9 +62,9 @@ export default function ReportsPage() {
     }
   }, [mounted, hasPermission, router]);
 
-  const { data: monthlyProfit, isLoading: loadingProfit } = useQuery({
-    queryKey: ['reports', 'monthly-profit'],
-    queryFn: () => api.get<MonthlyProfitRow[]>('/api/v1/reports/monthly-profit'),
+  const { data: monthlyCosts, isLoading: loadingCosts } = useQuery({
+    queryKey: ['reports', 'monthly-costs'],
+    queryFn: () => api.get<MonthlyCostRow[]>('/api/v1/reports/monthly-costs'),
     enabled: hasPermission(Permission.VIEW_REPORTS),
   });
 
@@ -104,15 +105,16 @@ export default function ReportsPage() {
       <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Monthly Profit */}
-        <Card title="Monthly Profit">
-          {loadingProfit ? (
+        {/* Monthly Costs — spend only. Selling prices are excluded, and each
+            currency is reported separately since no exchange rate exists. */}
+        <Card title="Monthly Costs">
+          {loadingCosts ? (
             <div className="flex items-center justify-center py-12">
               <Loading className="min-h-0 py-0" />
             </div>
-          ) : !monthlyProfit || monthlyProfit.length === 0 ? (
+          ) : !monthlyCosts || monthlyCosts.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-500">
-              No data available
+              No costs recorded yet
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -121,6 +123,9 @@ export default function ReportsPage() {
                   <tr className="border-b border-gray-200">
                     <th className="px-4 py-2 text-left font-medium text-gray-700">
                       Month
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      Currency
                     </th>
                     <th className="px-4 py-2 text-right font-medium text-gray-700">
                       Total Costs
@@ -131,11 +136,12 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyProfit.map((row) => (
+                  {monthlyCosts.map((row) => (
                     <tr
-                      key={row.month}
+                      key={`${row.month}-${row.currency}`}
                       className="border-b border-gray-100 last:border-0">
                       <td className="px-4 py-2">{row.month}</td>
+                      <td className="px-4 py-2">{row.currency}</td>
                       <td className="px-4 py-2 text-right">
                         {row.totalCost.toLocaleString()}
                       </td>
