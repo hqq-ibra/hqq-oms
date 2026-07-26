@@ -131,8 +131,30 @@ Both are fixed: uploads now live outside `apps/`, and paths come from
 variable and falls back to `join(process.cwd(), 'uploads')`.
 
 To make the location explicit rather than a side effect of how pm2 was launched, set
-`UPLOADS_DIR=/opt/hqq-oms/uploads` in `/opt/hqq-oms/.env` and restart. Leaving it unset
-resolves to the same directory today, so this is optional hardening, not a fix.
+`UPLOADS_DIR=/opt/hqq-oms/uploads`. Leaving it unset resolves to the same directory today,
+so this is hardening, not a fix.
+
+> **Do not put it in `/opt/hqq-oms/.env` — the API never reads that file.** There is no
+> `ConfigModule` and no `dotenv` call anywhere in `apps/api`; Prisma loads `.env`
+> independently for `DATABASE_URL`, which is why the database works and gives the
+> misleading impression that the app reads it. Anything you add there is invisible to
+> application code.
+>
+> Set it in the pm2 process environment instead, and persist it:
+>
+> ```bash
+> export UPLOADS_DIR=/opt/hqq-oms/uploads
+> pm2 restart hqq-api --update-env
+> pm2 save            # survives reboot / pm2 resurrect
+> ```
+>
+> Verify it actually landed — `pm2 jlist` shows the *launch* env, which can lie. Read the
+> real process environment:
+>
+> ```bash
+> API_PID=$(pm2 pid hqq-api)
+> tr '\0' '\n' < /proc/$API_PID/environ | grep UPLOADS_DIR
+> ```
 
 `apps/api/uploads` is still tracked in git (187 files, 77 MB). Exclude it from deployment
 archives; production's copies are the real ones.
