@@ -1,0 +1,502 @@
+<title>مؤسسة حسن جاسم القرقوش التجارية — حلول مصانع الأغذية</title>
+<style>
+{{FONTS}}
+
+/* Committed single-theme: the client's own product photography is dark navy,
+   so a light mode would fight the imagery instead of serving it. */
+:root{
+  --g0:#050E1B; --g1:#081525; --g2:#0E1E33; --g3:#14263E; --line:#1B3050;
+  --tx:#EAF0F7; --tx2:#96A9C0; --tx3:#63768F;
+  --red:#E03A2A; --green:#2BA04A; --wa:#25D366; --blue:#4C7EE8;
+  --disp:'Noto Kufi Arabic','Segoe UI',Tahoma,sans-serif;
+  --body:'Readex Pro','Segoe UI',Tahoma,sans-serif;
+  --mono:ui-monospace,'Cascadia Mono',Consolas,monospace;
+  --pad:clamp(20px,5vw,40px);
+}
+/* the artifact host owns <html>, so direction must come from CSS */
+html{direction:rtl}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--g1);color:var(--tx);font-family:var(--body);font-weight:300;line-height:1.7;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;padding-bottom:64px}
+img{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:2px}
+.wrap{max-width:1160px;margin:0 auto;padding:0 var(--pad);position:relative;z-index:2}
+.glow{position:absolute;border-radius:50%;filter:blur(100px);pointer-events:none;z-index:0}
+h1,h2,h3,h4{font-family:var(--disp);font-weight:700;letter-spacing:-.035em;text-wrap:balance;line-height:1.2}
+.ico{width:18px;height:18px;flex:none;fill:currentColor}
+
+/* EVERY machine image is contained, never cropped. */
+.shot{background:var(--g0);display:flex;align-items:center;justify-content:center;padding:clamp(8px,1.6vw,14px)}
+.shot img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+
+nav{position:sticky;top:0;z-index:60;background:rgba(8,21,37,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.nv{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 0}
+.bd{display:flex;align-items:center;gap:11px}
+.bd img{height:36px;width:auto}
+.bd b{font-family:var(--disp);font-size:12.5px;font-weight:700;line-height:1.35;display:block}
+.bd small{font-family:var(--mono);font-size:8.5px;letter-spacing:.2em;color:var(--tx3);display:block}
+.nl{display:flex;gap:8px;align-items:center;font-size:13.5px}
+.nl a{padding:8px 13px;border-radius:3px;color:var(--tx2)}
+.nl a.on{color:var(--tx);background:var(--g2);border:1px solid var(--line)}
+.nl a:hover{color:var(--tx)}
+.nr{display:flex;align-items:center;gap:11px}
+.nr .en{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--tx3)}
+.nr .st{font-size:12px;padding:8px 14px;border:1px solid var(--line);border-radius:3px;color:var(--tx2);background:var(--g2)}
+@media(max-width:940px){.nl{display:none}}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-size:14.5px;font-weight:400;
+  padding:15px 28px;border-radius:3px;transition:.2s}
+.b-red{background:var(--red);color:#fff;box-shadow:0 12px 28px rgba(224,58,42,.24)}
+.b-red:hover{background:#c62f20}
+.b-wa{background:var(--wa);color:#04180c}
+.b-wa:hover{background:#1eb958}
+.b-ln{border:1px solid #2A4266;color:var(--tx)}
+.b-ln:hover{background:var(--g2)}
+
+/* hero */
+.hero-o{position:relative;overflow:hidden;border-bottom:1px solid var(--line)}
+.hero{padding:clamp(44px,7vw,76px) 0 clamp(32px,4vw,48px);display:grid;grid-template-columns:1fr 1.08fr;
+  gap:clamp(26px,4vw,44px);align-items:center}
+.eyb{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--tx3);margin-bottom:18px;
+  display:flex;align-items:center;gap:10px}
+.eyb i{width:24px;height:1px;background:var(--red);display:block}
+h1{font-size:clamp(32px,5.4vw,58px);margin-bottom:16px}
+h1 span{color:var(--tx3)}
+.lede{font-size:clamp(14px,1.6vw,16px);line-height:2;color:var(--tx2);margin-bottom:22px;max-width:52ch}
+.badge{display:inline-flex;align-items:center;gap:10px;padding:7px 15px 7px 7px;border:1px solid rgba(43,160,74,.45);
+  background:rgba(43,160,74,.1);border-radius:3px;margin-bottom:24px}
+.badge i{font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;background:var(--green);color:#04180c;
+  padding:4px 8px;font-style:normal}
+.badge span{font-size:12.5px;color:#9fe4b4}
+.badge b{font-weight:400;color:#fff;font-family:var(--mono);letter-spacing:.05em}
+.cta-row{display:flex;gap:10px;flex-wrap:wrap}
+.hero-img{border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.hero-img img{width:100%;height:auto}
+@media(max-width:860px){.hero{grid-template-columns:1fr}}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
+.stats div{padding:clamp(24px,3.4vw,38px) 0 clamp(24px,3.4vw,38px) 22px;border-left:1px solid var(--line)}
+.stats div:last-child{border-left:none}
+.stats .v{font-family:var(--mono);font-size:clamp(40px,5.6vw,72px);font-weight:400;letter-spacing:-.05em;
+  line-height:.9;color:#fff;font-variant-numeric:tabular-nums}
+.stats .v sup{font-size:.36em;color:var(--red);vertical-align:super;margin-right:2px}
+.stats .k{font-size:12px;color:var(--tx2);margin-top:14px;line-height:1.6}
+@media(max-width:860px){.stats{grid-template-columns:1fr 1fr}
+  .stats div:nth-child(2n){border-left:none}.stats div:nth-child(-n+2){border-bottom:1px solid var(--line)}}
+
+section{padding:clamp(42px,6vw,64px) 0;position:relative}
+.sh{margin-bottom:clamp(22px,3vw,30px)}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--red);display:block;margin-bottom:11px}
+.sh h2{font-size:clamp(23px,3.2vw,36px);margin-bottom:10px}
+.sh p{font-size:14px;color:var(--tx2);line-height:1.95;max-width:62ch}
+
+/* two top-level doors */
+.doors{display:grid;grid-template-columns:1.25fr .75fr;gap:14px}
+@media(max-width:860px){.doors{grid-template-columns:1fr}}
+.door{background:var(--g2);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;
+  flex-direction:column;transition:.25s}
+.door:hover{border-color:#2A4266;transform:translateY(-3px);box-shadow:0 24px 46px rgba(0,0,0,.45)}
+.door .dt{padding:clamp(20px,3vw,28px) clamp(20px,3vw,28px) 0}
+.door h3{font-size:clamp(21px,2.7vw,28px);margin-bottom:9px}
+.door>.dt>p{font-size:13.5px;color:var(--tx2);line-height:1.95;margin-bottom:18px;max-width:46ch}
+.branch{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:18px}
+.branch a{flex:1 1 190px;display:flex;flex-direction:column;gap:5px;background:var(--g3);border:1px solid var(--line);
+  border-radius:5px;padding:13px 15px;transition:.2s}
+.branch a:hover{background:#1a2f4c;border-color:#2A4266}
+.branch b{font-family:var(--disp);font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px}
+.branch b i{font-style:normal;color:var(--tx3);font-size:13px}
+.branch span{font-size:11.5px;color:var(--tx3);line-height:1.6}
+.dmore{font-size:12.5px;color:var(--tx3);border-top:1px dashed var(--line);padding-top:13px;margin-bottom:20px}
+.door .shot{margin-top:auto;min-height:170px}
+.door .shot img{max-height:250px}
+
+/* machine cards */
+.grid{display:grid;gap:13px;grid-template-columns:repeat(3,1fr)}
+@media(max-width:980px){.grid{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.card{background:var(--g2);border:1px solid var(--line);border-radius:7px;overflow:hidden;transition:.25s;
+  display:flex;flex-direction:column}
+.card:hover{border-color:#2A4266;transform:translateY(-3px);box-shadow:0 20px 38px rgba(0,0,0,.42)}
+.card .shot{aspect-ratio:3/2}
+.card .cb{padding:16px 18px 18px;border-top:1px solid var(--line);flex:1;display:flex;flex-direction:column}
+.card h3{font-size:16px;margin-bottom:7px}
+.card>.cb>p{font-size:12.5px;line-height:1.9;color:var(--tx2)}
+.spec{border-top:1px dashed var(--line);margin-top:auto;padding-top:12px;display:flex;flex-direction:column;gap:7px}
+.spec>div{display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:10.5px;color:var(--tx3);
+  font-variant-numeric:tabular-nums}
+.spec b{color:var(--tx);font-weight:400;text-align:left;font-family:var(--body)}
+.feat{list-style:none;border-top:1px dashed var(--line);margin-top:auto;padding-top:12px;display:flex;
+  flex-direction:column;gap:7px}
+.feat li{font-size:12px;color:var(--tx2);display:flex;gap:9px;line-height:1.6}
+.feat li::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--red);margin-top:7px;flex:none}
+
+/* precision band — full photo, nothing cropped */
+.pband{background:var(--g0);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.pband .in{display:grid;grid-template-columns:.85fr 1.15fr;gap:clamp(22px,4vw,44px);align-items:center;
+  padding:clamp(36px,5vw,60px) 0}
+@media(max-width:860px){.pband .in{grid-template-columns:1fr}}
+.pband h2{font-size:clamp(22px,3.4vw,38px);max-width:18ch;margin-bottom:12px}
+.pband p{font-size:14px;color:var(--tx2);max-width:46ch;line-height:1.95}
+.pband .fig{border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.pband .fig img{width:100%;height:auto}
+
+.atrum{background:var(--g0);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.bridge{background:rgba(43,160,74,.08);border:1px solid rgba(43,160,74,.3);border-radius:6px;
+  padding:clamp(16px,2.4vw,22px);margin-top:20px}
+.bridge p{font-size:clamp(14px,1.7vw,16.5px);line-height:2.05;color:#c6ecd3;max-width:60ch}
+.bridge b{color:#fff;font-weight:400}
+.hold{border:1px dashed #2A4266;border-radius:7px;padding:clamp(26px,4vw,44px);text-align:center;
+  color:var(--tx3);margin-top:16px;background:var(--g2)}
+.hold b{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--tx2);display:block;margin-bottom:8px}
+.hold span{font-size:13px}
+
+.pn{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+@media(max-width:760px){.pn{grid-template-columns:1fr}}
+.pc{background:var(--g2);border:1px solid var(--line);border-radius:7px;padding:clamp(20px,3vw,26px)}
+.pc .role{font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;margin-bottom:10px}
+.pc.a .role{color:#7fe0a0}.pc.j .role{color:#8fb4ff}
+.pc h3{font-size:19px;margin-bottom:9px}
+.pc p{font-size:12.5px;color:var(--tx2);line-height:1.95}
+.pc .sc{margin-top:15px;padding-top:13px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:10.5px;color:var(--tx3)}
+.pc .sc b{color:#fff;font-weight:400;font-family:var(--body)}
+
+/* customers — the one light module; these logos carry dark text */
+.logos{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#d7dde5;border-radius:7px;overflow:hidden;
+  box-shadow:0 20px 46px rgba(0,0,0,.4)}
+@media(max-width:700px){.logos{grid-template-columns:1fr 1fr}}
+.logos div{background:#F3F5F8;display:flex;align-items:center;justify-content:center;padding:22px 16px;min-height:104px}
+.logos img{max-height:52px;width:auto;object-fit:contain}
+
+.led{border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--g2)}
+.lh,.lr{display:grid;grid-template-columns:38px 1fr 1.05fr;gap:14px;padding:13px clamp(14px,2.2vw,20px)}
+.lh{background:var(--g0);color:var(--tx3);font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
+  border-bottom:1px solid var(--line)}
+.lr{border-bottom:1px solid var(--line);font-size:13.5px;align-items:center}
+.lr:last-child{border-bottom:none}
+.lr:hover{background:var(--g3)}
+.lr .n{font-family:var(--mono);font-size:10.5px;color:var(--tx3)}
+.lr .s{color:var(--tx2);font-size:12.5px}
+@media(max-width:700px){.lh{display:none}.lr{grid-template-columns:30px 1fr;row-gap:5px}.lr .s{grid-column:2}}
+
+.close-o{position:relative;overflow:hidden;border-top:1px solid var(--line)}
+.close{text-align:center;padding:clamp(50px,7vw,80px) 0}
+.close h2{font-size:clamp(26px,4vw,46px);margin-bottom:12px}
+.close p{color:var(--tx2);font-size:14.5px;margin-bottom:24px}
+.close .cta-row{justify-content:center}
+footer{border-top:1px solid var(--line);padding:20px 0;display:flex;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;font-size:11.5px;color:var(--tx3)}
+
+.thumb{position:fixed;bottom:0;left:0;right:0;z-index:70;display:grid;grid-template-columns:1.45fr 1fr;
+  gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.thumb a{display:flex;align-items:center;justify-content:center;gap:8px;height:64px;font-size:14px}
+.thumb .w{background:var(--wa);color:#04180c}
+.thumb .t{background:var(--g2);color:var(--tx)}
+@media(min-width:861px){body{padding-bottom:0}.thumb{display:none}}
+
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<nav>
+  <div class="wrap nv">
+    <div class="bd">
+      <img src="{{IMG:logo}}" alt="شعار مؤسسة حسن جاسم القرقوش التجارية">
+      <div><b>مؤسسة حسن جاسم القرقوش</b><small>DAMMAM · AL-AHSA</small></div>
+    </div>
+    <div class="nl">
+      <a class="on" href="#lines">خطوط الإنتاج</a>
+      <a class="on" href="#parts">قطع الغيار</a>
+      <a href="#work">المشاريع</a>
+      <a href="#customers">عملاؤنا</a>
+      <a href="#contact">تواصل معنا</a>
+    </div>
+    <div class="nr"><span class="en">EN</span><a class="st" href="#">دخول الموظفين</a></div>
+  </div>
+</nav>
+
+<div class="hero-o">
+  <div class="glow" style="width:min(780px,90vw);height:480px;top:-160px;right:0;background:rgba(76,126,232,.2)"></div>
+  <div class="glow" style="width:min(500px,70vw);height:340px;bottom:-180px;left:-70px;background:rgba(224,58,42,.1)"></div>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <p class="eyb"><i></i>المملكة العربية السعودية · منذ ٢٠٠١</p>
+        <h1>منتجك القادم<br>يبدأ من <span>خط إنتاج</span>.</h1>
+        <p class="lede">مصدر حلول لمصانع الأغذية في الخليج — دراسةً وتصميماً وتوريداً وتركيباً وتشغيلاً وتدريباً. وبعد التشغيل نبقى معك بقطع الغيار والدعم الفني.</p>
+        <p class="badge"><i>EXCLUSIVE</i><span>وكيل حصري لـ <b>ATRUM</b> في الخليج العربي</span></p>
+        <div class="cta-row">
+          <a class="btn b-red" href="#contact">اطلب دراسة لمصنعك</a>
+          <a class="btn b-ln" href="https://wa.me/966554807333">{{WA}}تحدّث معنا على واتساب</a>
+        </div>
+      </div>
+      <div class="hero-img"><img src="{{IMG:sorting}}" alt="خط فرز التمور بالذكاء الاصطناعي"></div>
+    </div>
+
+    <div class="stats">
+      <div><p class="v">25<sup>+</sup></p><p class="k">عاماً من الخبرة</p></div>
+      <div><p class="v">90<sup>+</sup></p><p class="k">مصنعاً خدمناه في المملكة</p></div>
+      <div><p class="v">2</p><p class="k">الدمام · الأحساء</p></div>
+      <div><p class="v">1</p><p class="k">وكالة ATRUM الحصرية<br>للخليج العربي</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <section id="lines">
+    <div class="sh">
+      <span class="tag">ماذا نقدّم</span>
+      <h2>قسمان: خط إنتاج كامل، أو القطعة التي يحتاجها خطك اليوم</h2>
+      <p>المصنع يشتري خط إنتاج مرة كل بضع سنوات، ويشتري قطع الغيار كل شهر. لذلك فصلنا الاثنين — لتصل لما تحتاجه مباشرة.</p>
+    </div>
+    <div class="doors">
+      <div class="door">
+        <div class="dt">
+          <h3>خطوط الإنتاج</h3>
+          <p>ندرس احتياج مصنعك، نصمّم الحل، نورّده ونركّبه ونشغّله، وندرّب كوادرك.</p>
+          <div class="branch">
+            <a href="#dates"><b><i>←</i>مصانع التمور</b><span>تخصصنا منذ ٢٥ عاماً · ٩٠+ مصنعاً</span></a>
+            <a href="#dairy"><b><i>←</i>الألبان والأجبان</b><span>وكالة ATRUM الحصرية · الخليج العربي</span></a>
+          </div>
+          <p class="dmore">اختر قطاع مصنعك — لكل قطاع مكائنه وخطوطه ومشاريعه المنفّذة.</p>
+        </div>
+        <div class="shot"><img src="{{IMG:vacuum}}" alt="ماكينة التعبئة بالفاكيوم"></div>
+      </div>
+
+      <div class="door">
+        <div class="dt">
+          <h3>قطع الغيار</h3>
+          <p>شفرات وسكاكين التقطيع، سلاسل سحب الفيلم (الجنازير)، وقطع الغيار لجميع مكائن المصانع — لكلا القطاعين.</p>
+          <div class="branch"><a href="#parts"><b><i>←</i>ادخل قسم قطع الغيار</b><span>مخزون جاهز · توريد سريع</span></a></div>
+        </div>
+        <div class="shot"><img src="{{IMG:blades}}" alt="السكاكين الدائرية والطولية الصناعية"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="dates">
+    <div class="sh">
+      <span class="tag">خطوط الإنتاج · القطاع الأول</span>
+      <h2>مصانع التمور</h2>
+      <p>من قالب السيليكون الذي يمنع التسريب، إلى خط إنتاج المعمول الكامل — منظومة متكاملة من التنظيف والفرز والتعبئة إلى خطوط الدبس وعجينة التمر.</p>
+    </div>
+    <div class="grid">
+      <article class="card">
+        <div class="shot"><img src="{{IMG:vacuum}}" alt="ماكينة التعبئة بالفاكيوم DLZ"></div>
+        <div class="cb"><h3>مكائن التعبئة بالفاكيوم</h3>
+          <p>أنظمة تغليف حراري بسحب الهواء لحفظ التمور لأطول فترة — منفردة أو ضمن خط متكامل.</p>
+          <div class="spec">
+            <div><span>الإنتاجية</span><b>5 – 6 دورات / دقيقة</b></div>
+            <div><span>القوالب</span><b>تتوافق مع قوالب متعددة</b></div>
+            <div><span>التحكم</span><b>Siemens PLC &amp; HMI</b></div>
+            <div><span>نظام التفريغ</span><b>BUSCH</b></div>
+            <div><span>الخامة</span><b>ستانلس ستيل 304</b></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:sorting}}" alt="ماكينة فرز التمور بالذكاء الاصطناعي"></div>
+        <div class="cb"><h3>الفرز بالذكاء الاصطناعي</h3>
+          <p>فرز وتصنيف حسب الحجم واللون والجودة بدقة عالية — يرفع كفاءة الخط ويقلّل الاعتماد على العمالة.</p>
+          <div class="spec">
+            <div><span>الرؤية</span><b>AI Vision</b></div>
+            <div><span>السرعة</span><b>حتى 720 كجم / ساعة</b></div>
+            <div><span>دقة الفرز</span><b>أكثر من 99.99%</b></div>
+            <div><span>الخامة</span><b>ستانلس ستيل 304</b></div>
+            <div><span>شريك النجاح</span><b>JOYSORT</b></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:brush}}" alt="ماكينة تنظيف وتلميع التمور"></div>
+        <div class="cb"><h3>تنظيف وتلميع التمور</h3>
+          <p>مصممة لتنظيف وتلميع التمور باحترافية عالية، تحافظ على الجودة والمذاق الطبيعي بأحدث التقنيات.</p>
+          <ul class="feat">
+            <li>فرش ناعمة تحافظ على التمرة</li>
+            <li>تنظيف وتلميع في نفس الوقت</li>
+            <li>آمنة تماماً للأغذية</li>
+            <li>ستانلس ستيل لا يصدأ</li>
+            <li>تحكم بالسرعة حسب حاجتك</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:pitting}}" alt="ماكينة نزع النواة من التمرة"></div>
+        <div class="cb"><h3>نزع النواة من التمرة</h3>
+          <p>تنزع النواة بكفاءة عالية مع المحافظة على شكل الثمرة — مطابقة لمعايير سلامة الأغذية.</p>
+          <div class="spec">
+            <div><span>القدرة الإنتاجية</span><b>100 – 150 كجم / ساعة</b></div>
+            <div><span>المحرك</span><b>0.75 كيلو واط</b></div>
+            <div><span>الجهد الكهربائي</span><b>220 فولت / 60 هرتز</b></div>
+            <div><span>الوزن</span><b>120 كجم تقريباً</b></div>
+            <div><span>الأبعاد</span><b>950 × 600 × 900 مم</b></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:silicone}}" alt="قوالب وأختام السيليكون"></div>
+        <div class="cb"><h3>قوالب وأختام السيليكون</h3>
+          <p>ربلات عزل لمكائن التعبئة بسحب الهواء، مصنّعة بمطابقة تامة لأبعاد كل ماكينة. تخصصنا الأول وأكثر منتجاتنا طلباً.</p>
+          <div class="spec">
+            <div><span>المطابقة</span><b>حسب موديل الماكينة</b></div>
+            <div><span>الخامة</span><b>سيليكون غذائي</b></div>
+            <div><span>المقاسات</span><b>تصنيع حسب الطلب</b></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:measuring}}" alt="قياس قالب السيليكون بدقة عالية"></div>
+        <div class="cb"><h3>خطوط الإنتاج المتكاملة</h3>
+          <p>تصميم وتنفيذ خطوط إنتاج المعمول وتعبئته، وخطوط دبس التمر وعجينة التمر — مع استشارات تشغيل لرفع الكفاءة.</p>
+          <div class="spec">
+            <div><span>النطاق</span><b>دراسة · توريد · تركيب · تدريب</b></div>
+            <div><span>منفّذ في</span><b>الأحساء للصناعات الغذائية</b></div>
+            <div><span>وأيضاً</span><b>جمعية النخلة التعاونية</b></div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+</div>
+
+<div class="pband">
+  <div class="wrap in">
+    <div>
+      <span class="tag">الدقة</span>
+      <h2>مطابقة تامة لأبعاد ماكينتك</h2>
+      <p>القالب الذي لا يطابق الماكينة بالملّيمتر يسرّب — والتسريب يوقف الخط. لذلك نقيس كل قالب على موديل الماكينة قبل التصنيع، ونصنّعه من سيليكون غذائي يتحمّل التشغيل المستمر.</p>
+    </div>
+    <div class="fig"><img src="{{IMG:measuring}}" alt="قياس قالب السيليكون بمقياس دقيق"></div>
+  </div>
+</div>
+
+<div class="atrum" id="dairy">
+  <div class="wrap"><section>
+    <div class="sh">
+      <span class="tag" style="color:#7fe0a0">خطوط الإنتاج · القطاع الثاني</span>
+      <h2>مصانع الألبان والأجبان — وكالة ATRUM</h2>
+      <p>وكلاء حصريون لـ ATRUM في الخليج العربي، لا في المملكة وحدها. خطوط ومكائن للزبدة والأجبان ومنتجات غذائية أخرى.</p>
+      <div class="bridge"><p>نفس الدعم الفني وقطع الغيار التي اعتمدت عليها <b>أكثر من ٩٠ مصنع تمور</b> على مدى <b>٢٥ عاماً</b> — الآن لخطوط الألبان والأجبان.</p></div>
+    </div>
+    <div class="hold"><b>ATRUM — صور الخطوط والشعار</b><span>بانتظار الملفات من الشركة</span></div>
+  </section></div>
+</div>
+
+<div class="wrap">
+  <section id="parts">
+    <div class="sh">
+      <span class="tag">قطع الغيار</span>
+      <h2>الخط <span style="color:var(--red)">لا يتوقف</span>.</h2>
+      <p>ساعة توقّف واحدة تكلّف أكثر من القطعة التي تنتظرها. قطع ومكوّنات أساسية عالية الجودة تدعم استمرارية خط الإنتاج وتقلّل فترات التوقف.</p>
+    </div>
+    <div class="grid">
+      <article class="card">
+        <div class="shot"><img src="{{IMG:blades}}" alt="السكاكين الدائرية والطولية الصناعية"></div>
+        <div class="cb"><h3>السكاكين الدائرية والطولية</h3>
+          <p>دقة قطع استثنائية وأداء يدوم طويلاً — مستقيمة مسننة للقص العرضي، ودائرية للقص الطولي.</p>
+          <ul class="feat">
+            <li>فولاذ صناعي عالي الجودة يضمن متانة وقوة فائقة</li>
+            <li>معالجة حرارية متقدمة لزيادة الصلابة</li>
+            <li>مقاومة عالية للتآكل تتحمل ظروف التشغيل القاسية</li>
+            <li>حافة قطع دقيقة وثابتة تحافظ على الجودة مع الوقت</li>
+            <li>تصنيع حسب المقاسات والمواصفات المطلوبة</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:spares}}" alt="قطع الغيار لجميع المكائن"></div>
+        <div class="cb"><h3>قطع الغيار لجميع المكائن</h3>
+          <p>قطع غيار أصلية وبدائل عالية الجودة لجميع مكائن مصانع التمور، لضمان استمرارية التشغيل وتقليل فترات التوقف.</p>
+          <div class="spec">
+            <div><span>التغطية</span><b>جميع المكائن</b></div>
+            <div><span>التوفّر</span><b>مخزون جاهز</b></div>
+            <div><span>الخيارات</span><b>أصلية وبدائل</b></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="shot"><img src="{{IMG:chains}}" alt="سلاسل سحب الفيلم — الجنازير"></div>
+        <div class="cb"><h3>سلاسل سحب الفيلم (الجنازير)</h3>
+          <p>سلاسل نقل بمشابك زنبركية تمسك فيلم التغليف بإحكام وتحرّكه بدقة وانتظام داخل مكائن التغليف بالتفريغ الحراري.</p>
+          <div class="spec">
+            <div><span>الوظيفة</span><b>ثبات دورة العمل</b></div>
+            <div><span>الأهمية</span><b>قطعة أساسية</b></div>
+            <div><span>التركيب</span><b>داخل مكائن التغليف</b></div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="partners">
+    <div class="sh"><span class="tag">شركاء النجاح</span><h2>لا نبيع ما لا نقف خلفه</h2>
+      <p>نمثّل مصنّعين نثق بمكائنهم، ونقدّم خلفهم الدعم الفني وقطع الغيار في المنطقة.</p></div>
+    <div class="pn">
+      <div class="pc a"><p class="role">وكالة حصرية</p><h3>ATRUM</h3>
+        <p>خطوط ومكائن الألبان والأجبان والمنتجات الغذائية. وكالة حصرية تغطي الخليج العربي كاملاً.</p>
+        <p class="sc"><span>النطاق</span><b>الخليج العربي</b></p></div>
+      <div class="pc j"><p class="role">شريك نجاح</p><h3>JOYSORT</h3>
+        <p>الفرز المتقدم للتمور — أنظمة فرز وتصنيف بالذكاء الاصطناعي حسب الحجم واللون والجودة.</p>
+        <p class="sc"><span>المجال</span><b>الفرز المتقدم للتمور</b></p></div>
+    </div>
+  </section>
+
+  <section id="customers">
+    <div class="sh"><span class="tag">عملاؤنا</span><h2>أكثر من ٩٠ مصنع تمور في المملكة</h2>
+      <p>منهم — مصانع اختارتنا شريكاً لتجهيزها وتشغيلها ودعمها.</p></div>
+    <div class="logos">
+      <div><img src="{{IMG:c1}}" alt="مصنع الامتياز لمعالجة وتصنيع التمور"></div>
+      <div><img src="{{IMG:c2}}" alt="الخماش"></div>
+      <div><img src="{{IMG:c3}}" alt="باسقات القصيم"></div>
+      <div><img src="{{IMG:c4}}" alt="الأمين للتمور"></div>
+      <div><img src="{{IMG:c5}}" alt="رواد التمر"></div>
+      <div><img src="{{IMG:c6}}" alt="مصنع الطيار الفاخر للتمور"></div>
+      <div><img src="{{IMG:c7}}" alt="تمرا"></div>
+      <div><img src="{{IMG:c8}}" alt="مصنع ثمار النخبة"></div>
+    </div>
+  </section>
+
+  <section id="work">
+    <div class="sh"><span class="tag">سجل التنفيذ</span><h2>مشاريع منفّذة</h2>
+      <p>نماذج مختارة — السجل الكامل يضم أكثر من ٩٠ مصنع تمور في مختلف مناطق المملكة.</p></div>
+    <div class="led">
+      <div class="lh"><span>#</span><span>المصنع / الجهة</span><span>الحل المُنفّذ</span></div>
+      <div class="lr"><span class="n">01</span><span>مصنع عبدالهادي الربيعة للتمور</span><span class="s">ماكينة تغليف تمر فاكيوم — 6 كجم/دورة</span></div>
+      <div class="lr"><span class="n">02</span><span>مصنع العيد للتمور</span><span class="s">ماكينة تغليف تمر فاكيوم — 6 كجم/دورة</span></div>
+      <div class="lr"><span class="n">03</span><span>مصنع حبيب الرزق</span><span class="s">ماكينة تغليف تمر فاكيوم — 4 كجم/دورة</span></div>
+      <div class="lr"><span class="n">04</span><span>شركة الأحساء للصناعات الغذائية</span><span class="s">خط إنتاج عجينة تمر كامل</span></div>
+      <div class="lr"><span class="n">05</span><span>مصنع جازات للتمور</span><span class="s">ماكينة فرز التمور حسب الأحجام والجودة</span></div>
+      <div class="lr"><span class="n">06</span><span>جمعية النخلة التعاونية لتعبئة التمور — الأحساء</span><span class="s">خط إنتاج معمول شامل التغليف</span></div>
+      <div class="lr"><span class="n">07</span><span>مصنع علي أجود لتعبئة التمور — الأحساء</span><span class="s">ماكينة تغليف تمر فاكيوم — 4 كجم/دورة</span></div>
+    </div>
+  </section>
+</div>
+
+<div class="close-o" id="contact">
+  <div class="glow" style="width:min(820px,92vw);height:420px;bottom:-230px;left:50%;transform:translateX(-50%);background:rgba(76,126,232,.15)"></div>
+  <div class="wrap"><div class="close">
+    <h2>احكِ لنا عن مصنعك.</h2>
+    <p>نرجع لك بدراسة وعرض سعر — من الدمام والأحساء، وتغطية لجميع مناطق المملكة والخليج.</p>
+    <div class="cta-row">
+      <a class="btn b-wa" href="https://wa.me/966554807333">{{WA}}تواصل على واتساب</a>
+      <a class="btn b-ln" href="tel:+966554807333">{{TEL}}اتصل بنا</a>
+    </div>
+  </div></div>
+  <div class="wrap"><footer>
+    <span>مؤسسة حسن جاسم القرقوش التجارية · الدمام والأحساء · المملكة العربية السعودية</span>
+    <span>ATRUM · JOYSORT</span>
+  </footer></div>
+</div>
+
+<div class="thumb">
+  <a class="w" href="https://wa.me/966554807333">{{WA}}واتساب</a>
+  <a class="t" href="tel:+966554807333">{{TEL}}اتصل بنا</a>
+</div>
