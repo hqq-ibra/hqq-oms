@@ -6,6 +6,9 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { WsGateway } from '../ws/ws.gateway';
 import { isValidTransition } from './order-workflow';
+import { nextSequenceNumber } from './sequence';
+import { buildQuotationDefaults } from './quotation-defaults';
+import { computeQuotationTotals } from './quotation-totals';
 
 export interface OrderListFilters {
   status?: string;
@@ -109,6 +112,7 @@ export class OrdersService {
         assignedUser: { select: { id: true, name: true, email: true, role: true } },
         items: { include: { product: { include: { factory: true } } } },
         costs: true,
+        quotation: true,
         statusHistory: {
           orderBy: { changedAt: 'desc' },
           include: { changer: true },
@@ -124,37 +128,48 @@ export class OrdersService {
     return { ...order, files };
   }
 
+  private async getNextQuoteNumber(): Promise<string> {
+    const prefix = `QT-${new Date().getFullYear()}-`;
+    const last = await this.prisma.order.findFirst({
+      where: { quoteNumber: { startsWith: prefix } },
+      orderBy: { quoteNumber: 'desc' },
+      select: { quoteNumber: true },
+    });
+    return nextSequenceNumber(prefix, last?.quoteNumber ?? null);
+  }
+
   private async getNextOrderNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `ORD-${year}-`;
+    const prefix = `ORD-${new Date().getFullYear()}-`;
     const last = await this.prisma.order.findFirst({
       where: { orderNumber: { startsWith: prefix } },
       orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true },
     });
-    const nextNum = last
-      ? parseInt(last.orderNumber.replace(prefix, ''), 10) + 1
-      : 1;
-    return `${prefix}${String(nextNum).padStart(4, '0')}`;
+    return nextSequenceNumber(prefix, last?.orderNumber ?? null);
   }
 
   private async getNextFactoryOrderNumber(customerCode: string): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `FO-${year}-${customerCode}-`;
+    const prefix = `FO-${new Date().getFullYear()}-${customerCode}-`;
     const last = await this.prisma.order.findFirst({
       where: { factoryOrderNumber: { startsWith: prefix } },
       orderBy: { factoryOrderNumber: 'desc' },
+      select: { factoryOrderNumber: true },
     });
-    const nextNum = last
-      ? parseInt(last.factoryOrderNumber.replace(prefix, ''), 10) + 1
-      : 1;
-    return `${prefix}${String(nextNum).padStart(4, '0')}`;
+    return nextSequenceNumber(prefix, last?.factoryOrderNumber ?? null);
   }
 
   async create(
     dto: {
       orderType: string;
       customerId: string;
-      items: { productId: string; quantity: number }[];
+      items: {
+        productId: string;
+        quantity: number;
+        unitPrice?: number;
+        unitLabel?: string;
+        description?: string;
+        specs?: Record<string, string> | null;
+      }[];
       expectedDeliveryDate?: string;
       assignedUserId?: string | null;
       internalNotes?: string;
@@ -165,31 +180,66 @@ export class OrdersService {
       throw new BadRequestException('At least one item is required');
     }
 
+    // Money guard: computeQuotationTotals multiplies these straight through, so
+    // a negative slipping in would print a negative line on a customer quotation
+    // and be written to the order's selling price.
+    for (const item of dto.items) {
+      if (!Number.isFinite(item.quantity) || item.quantity < 1) {
+        throw new BadRequestException('Quantity must be at least 1');
+      }
+      if (item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice < 0) {
+        throw new BadRequestException('Unit price cannot be negative');
+      }
+    }
+
     const customer = await this.prisma.customer.findUnique({
       where: { id: dto.customerId },
+      include: { contacts: { take: 1 } },
     });
     if (!customer) throw new NotFoundException('Customer not found');
 
-    const [orderNumber, factoryOrderNumber] = await Promise.all([
-      this.getNextOrderNumber(),
-      this.getNextFactoryOrderNumber(customer.customerCode),
-    ]);
+    const quoteNumber = await this.getNextQuoteNumber();
+    const primaryContact = customer.contacts?.[0] ?? null;
+    const defaults = buildQuotationDefaults({
+      customerName: customer.name,
+      customerCity: customer.city ?? null,
+      contactName: primaryContact?.name ?? null,
+      contactPhone: primaryContact?.phone ?? null,
+      quoteDate: new Date(),
+    });
 
+    // No orderNumber / factoryOrderNumber and no stock movement: this is a
+    // quotation, not a commitment. Both happen in changeStatus on CONFIRMED.
     const order = await this.prisma.order.create({
       data: {
         orderType: dto.orderType,
         customerId: dto.customerId,
-        orderNumber,
-        factoryOrderNumber,
-        status: 'NEW',
-        ...(dto.expectedDeliveryDate ? { expectedDeliveryDate: new Date(dto.expectedDeliveryDate) } : {}),
+        quoteNumber,
+        status: 'QUOTATION',
+        ...(dto.expectedDeliveryDate
+          ? { expectedDeliveryDate: new Date(dto.expectedDeliveryDate) }
+          : {}),
         ...(dto.assignedUserId ? { assignedUserId: dto.assignedUserId } : {}),
         ...(dto.internalNotes ? { internalNotes: dto.internalNotes } : {}),
         items: {
-          create: dto.items.map((item) => ({
+          create: dto.items.map((item, index) => ({
             productId: item.productId,
             quantity: item.quantity,
+            unitPrice: item.unitPrice ?? null,
+            ...(item.unitLabel ? { unitLabel: item.unitLabel } : {}),
+            description: item.description ?? null,
+            orderIndex: index,
+            ...(item.specs ? { specs: item.specs } : {}),
           })),
+        },
+        quotation: {
+          create: {
+            quoteDate: defaults.quoteDate,
+            validUntil: defaults.validUntil,
+            clientBlock: defaults.clientBlock,
+            contact: defaults.contact,
+            attn: defaults.attn,
+          },
         },
       },
       include: {
@@ -198,17 +248,14 @@ export class OrdersService {
         factory: true,
         assignedUser: { select: { id: true, name: true, email: true, role: true } },
         items: { include: { product: { include: { factory: true } } } },
+        quotation: true,
       },
     });
 
+    // Linking the product to the customer stays here, at order placement:
+    // it drives the "Suggested — Previously ordered" list, and a customer who
+    // asked for a price should see that product suggested next time.
     for (const item of dto.items) {
-      const product = await this.prisma.product.findUnique({ where: { id: item.productId }, select: { inventory: true } });
-      if (product && product.inventory > 0) {
-        await this.prisma.product.update({
-          where: { id: item.productId },
-          data: { inventory: { decrement: Math.min(item.quantity, product.inventory) } },
-        });
-      }
       await this.prisma.customerProduct.upsert({
         where: {
           customerId_productId: {
