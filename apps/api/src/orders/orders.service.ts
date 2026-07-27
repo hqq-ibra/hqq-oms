@@ -9,6 +9,7 @@ import { isValidTransition } from './order-workflow';
 import { nextSequenceNumber } from './sequence';
 import { buildQuotationDefaults } from './quotation-defaults';
 import { computeQuotationTotals } from './quotation-totals';
+import { findIncompleteSpecLines } from './mold-specs';
 
 export interface OrderListFilters {
   status?: string;
@@ -308,7 +309,19 @@ export class OrdersService {
   ) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { customer: true, product: true, factory: true, assignedUser: true },
+      include: {
+        customer: true,
+        product: true,
+        factory: true,
+        assignedUser: true,
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            product: { select: { nameEn: true, requiresLineSpecs: true } },
+          },
+        },
+        quotation: true,
+      },
     });
     if (!order) throw new NotFoundException('Order not found');
 
@@ -318,11 +331,59 @@ export class OrdersService {
       );
     }
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.order.update({
+    const isConfirming = newStatus === 'CONFIRMED';
+
+    // A mold cannot be cut without all four specs. Quotations may be saved
+    // incomplete while pricing; confirmation is where it has to be complete.
+    if (isConfirming) {
+      const incomplete = findIncompleteSpecLines(
+        order.items.map((item, index) => ({
+          index,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: item.specs,
+        })),
+      );
+      if (incomplete.length > 0) {
+        const detail = incomplete
+          .map((l) => `line ${l.index + 1} (missing ${l.missing.join(', ')})`)
+          .join('; ');
+        throw new BadRequestException(
+          `Cannot confirm: mold specifications are incomplete — ${detail}`,
+        );
+      }
+    }
+
+    // Everything a quotation deliberately deferred happens here, and only here.
+    const confirmationData: Record<string, unknown> = {};
+    let sellingPrice = 0;
+    if (isConfirming) {
+      const [orderNumber, factoryOrderNumber] = await Promise.all([
+        this.getNextOrderNumber(),
+        this.getNextFactoryOrderNumber(order.customer.customerCode),
+      ]);
+      confirmationData.orderNumber = orderNumber;
+      confirmationData.factoryOrderNumber = factoryOrderNumber;
+      confirmationData.confirmedAt = new Date();
+
+      sellingPrice = computeQuotationTotals({
+        lines: order.items.map((item) => ({
+          quantity: item.quantity,
+          unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
+        })),
+        discountAmount: Number(order.quotation?.discountAmount ?? 0),
+        vatEnabled: order.quotation?.vatEnabled ?? true,
+        vatPercent: Number(order.quotation?.vatPercent ?? 15),
+      }).grandTotal;
+    }
+
+    // One transaction: a half-confirmed order — numbered but with no selling
+    // price, or stock moved but status unchanged — would corrupt the books.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.order.update({
         where: { id },
         data: {
           status: newStatus,
+          ...confirmationData,
           ...(newStatus === 'COMPLETED' ? { completedAt: new Date() } : {}),
         },
         include: {
@@ -331,9 +392,11 @@ export class OrdersService {
           factory: true,
           assignedUser: { select: { id: true, name: true, email: true, role: true } },
           items: { include: { product: { include: { factory: true } } } },
+          quotation: true,
         },
-      }),
-      this.prisma.orderStatusHistory.create({
+      });
+
+      await tx.orderStatusHistory.create({
         data: {
           orderId: id,
           oldStatus: order.status,
@@ -341,8 +404,49 @@ export class OrdersService {
           changedBy: userId,
           note,
         },
-      }),
-    ]);
+      });
+
+      if (isConfirming) {
+        for (const item of order.items) {
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { inventory: true },
+          });
+          if (product && product.inventory > 0) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: {
+                inventory: { decrement: Math.min(item.quantity, product.inventory) },
+              },
+            });
+          }
+        }
+
+        // Revenue in Reports and Analytics is the SELLING_PRICE cost row
+        // (analytics/lib/sales.ts). Derive it so the price is entered once.
+        const existing = await tx.orderCost.findFirst({
+          where: { orderId: id, costType: 'SELLING_PRICE' },
+        });
+        if (existing) {
+          await tx.orderCost.update({
+            where: { id: existing.id },
+            data: { amount: sellingPrice, currency: 'SAR' },
+          });
+        } else {
+          await tx.orderCost.create({
+            data: {
+              orderId: id,
+              costType: 'SELLING_PRICE',
+              amount: sellingPrice,
+              currency: 'SAR',
+              createdBy: userId,
+            },
+          });
+        }
+      }
+
+      return result;
+    });
 
     this.wsGateway.emit('order.status_changed', {
       order: updated,

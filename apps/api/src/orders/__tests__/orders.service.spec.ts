@@ -205,3 +205,192 @@ describe('OrdersService.create', () => {
     expect(quote.validUntil).toBeInstanceOf(Date);
   });
 });
+
+function quotationOrder(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'o1',
+    orderType: 'NEW_MOLD',
+    status: 'QUOTATION',
+    customerId: 'c1',
+    orderNumber: null,
+    factoryOrderNumber: null,
+    customer: { id: 'c1', customerCode: 'ACME', name: 'Acme' },
+    items: [
+      {
+        id: 'i1',
+        productId: 'p1',
+        quantity: 2,
+        unitPrice: 100,
+        specs: null,
+        product: { nameEn: 'Tray 500g', requiresLineSpecs: false },
+      },
+    ],
+    quotation: {
+      discountAmount: 0,
+      vatEnabled: true,
+      vatPercent: 15,
+    },
+    ...overrides,
+  };
+}
+
+const moldLine = (specs: unknown, id = 'm1') => ({
+  id,
+  productId: 'mold',
+  quantity: 1,
+  unitPrice: 900,
+  specs,
+  product: { nameEn: 'New Mold — Silicone Thermoforming', requiresLineSpecs: true },
+});
+
+describe('OrdersService.changeStatus — confirming', () => {
+  function setup(order = quotationOrder()) {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(order);
+    prisma.order.update.mockImplementation(({ data }: { data: any }) =>
+      Promise.resolve({ ...order, ...data }),
+    );
+    prisma.product.findUnique.mockResolvedValue({ inventory: 10 });
+    return { prisma, ...createService(prisma) };
+  }
+
+  it('assigns the order and factory numbers on confirmation', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    const data = (prisma.order.update as Mock).mock.calls[0][0].data;
+    expect(data.orderNumber).toMatch(/^ORD-\d{4}-0001$/);
+    expect(data.factoryOrderNumber).toMatch(/^FO-\d{4}-ACME-0001$/);
+    expect(data.confirmedAt).toBeInstanceOf(Date);
+  });
+
+  it('decrements stock only once the customer commits', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.product.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'p1' },
+        data: { inventory: { decrement: 2 } },
+      }),
+    );
+  });
+
+  it('never drives inventory negative', async () => {
+    const { prisma, service } = setup();
+    prisma.product.findUnique.mockResolvedValue({ inventory: 1 });
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.product.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { inventory: { decrement: 1 } } }),
+    );
+  });
+
+  it('records the quote grand total as the selling price', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    // 2 × 100 = 200, +15% VAT = 230
+    expect(prisma.orderCost.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          orderId: 'o1',
+          costType: 'SELLING_PRICE',
+          amount: 230,
+          currency: 'SAR',
+        }),
+      }),
+    );
+  });
+
+  it('updates rather than duplicates an existing selling price', async () => {
+    const { prisma, service } = setup();
+    prisma.orderCost.findFirst.mockResolvedValue({ id: 'cost1' });
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.orderCost.create).not.toHaveBeenCalled();
+    expect(prisma.orderCost.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'cost1' },
+        data: expect.objectContaining({ amount: 230 }),
+      }),
+    );
+  });
+
+  it('leaves numbers and stock alone for every other transition', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({
+        status: 'CONFIRMED',
+        orderNumber: 'ORD-2026-0001',
+        factoryOrderNumber: 'FO-2026-ACME-0001',
+      }),
+    );
+
+    await service.changeStatus('o1', 'SAMPLE_RECEIVED', 'u1');
+
+    const data = (prisma.order.update as Mock).mock.calls[0][0].data;
+    expect(data.orderNumber).toBeUndefined();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.orderCost.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to confirm a mold line that is missing specs', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine({ machine: 'MV', capacity: '6K' })] }),
+    );
+
+    await expect(service.changeStatus('o1', 'CONFIRMED', 'u1')).rejects.toThrow(
+      /grams/,
+    );
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it('confirms a mold line once all four specs are set', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({
+        items: [moldLine({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' })],
+      }),
+    );
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.orderNumber).toMatch(
+      /^ORD-\d{4}-0001$/,
+    );
+  });
+
+  it('does not demand specs from ordinary products', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.order.update).toHaveBeenCalled();
+  });
+
+  it('lets an incomplete mold quotation still be rejected', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine(null)] }),
+    );
+
+    await service.changeStatus('o1', 'REJECTED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.status).toBe('REJECTED');
+  });
+
+  it('rejects a quotation without assigning anything', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'REJECTED', 'u1');
+
+    const data = (prisma.order.update as Mock).mock.calls[0][0].data;
+    expect(data.status).toBe('REJECTED');
+    expect(data.orderNumber).toBeUndefined();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+});
