@@ -151,15 +151,24 @@ Discount is entered as a SAR **amount**; the percentage is derived for display
 and hidden in print (`.disc-info-row`). Discount rows hide entirely when the
 discount is zero.
 
-This becomes a pure, tested function. Because `packages/shared` is unwired
-(see "Known constraints"), it is implemented twice:
+This becomes a pure function. Because `packages/shared` is unwired **and
+`apps/web` has no test runner at all** (no jest or vitest in its
+devDependencies, no `test` script), it cannot be a tested module on both sides.
+So the server is made authoritative rather than pretending the copies are equal:
 
-- `apps/api/src/orders/quotation-totals.ts` — **authoritative**; used when
-  confirming to compute the `SELLING_PRICE` cost.
-- `apps/web/src/lib/quotation-totals.ts` — display only; recalculates as you type.
+- `apps/api/src/orders/quotation-totals.ts` — **authoritative and tested**
+  (jest, `apps/api/jest.config.js`). Computes the totals returned by the
+  quotation endpoints and the `SELLING_PRICE` cost written on confirm.
+- `apps/web/src/lib/quotation-totals.ts` — a literal copy, **display only**,
+  used for optimistic updates while typing.
 
-Both are covered by the **same test vectors**, kept in a single JSON fixture
-imported by both spec files, so the copies cannot drift silently.
+Drift is contained by reconciliation, not by duplicated tests: `GET` and `PATCH`
+both return server-computed totals, and the page replaces its optimistic numbers
+with the server's on every response. A divergent client copy would self-correct
+within one autosave rather than print a wrong number.
+
+Adding vitest to `apps/web` so the copy can be tested directly is a worthwhile
+follow-up, but it is not in this plan's scope.
 
 ---
 
@@ -314,7 +323,8 @@ Suggested: `QUOTATION` amber, `CONFIRMED` blue (inheriting `NEW`'s colour),
 - `apps/web/src/app/(dashboard)/orders/new/page.tsx`
 - `apps/web/src/app/(dashboard)/orders/[id]/page.tsx`
 - `apps/web/src/app/(dashboard)/orders/[id]/quotation/page.tsx` — **new**
-- `apps/web/public/quotation-letterhead.png` — **new**, extracted from the HTML's base64
+- `apps/web/public/quotation-letterhead.jpg` — **new**, extracted from the HTML's
+  `data:image/jpeg;base64` header image (~30 KB)
 
 **Dead but kept consistent**
 - `packages/shared/src/enums.ts`, `packages/shared/src/workflows.ts`
@@ -360,7 +370,7 @@ between build and restart leaves the old code serving and produces 404s where
 
 ## 8. Testing
 
-**Unit — `quotation-totals`** (both copies, shared vectors)
+**Unit — `quotation-totals`** (API copy; the web copy is display-only, see §3)
 - line total = qty × price; subtotal sums lines
 - discount clamps to `[0, subtotal]`
 - VAT applies to net, not subtotal
