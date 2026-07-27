@@ -23,6 +23,7 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
   Zero is the bar. Any `tsc` error you see is one you introduced.
 - **Baseline test suite:** `npm -w apps/api run test` → 6 suites, 28 tests, all passing. Never finish a task below that count.
 - **Prisma `DateTime`:** always pass real `Date` objects to Prisma writes, never ISO strings.
+- **Never run `prisma migrate dev` or `prisma db push` in this repo.** The schema grew under `db push`, so ~35 tables exist that no migration file created. All 9 migrations on disk are recorded as applied, but replaying them would not reproduce the database, and `migrate dev` treats that as drift and demands `migrate reset` — which destroys all data. Migrations here are produced with `prisma migrate diff` and recorded with `prisma migrate resolve --applied`. This is pre-existing and out of scope to fix.
 - **Currency is SAR only** for quotations.
 - **Mold placeholder:** a product with `requiresLineSpecs = true` carries its specs on the *line*, not the product, and may appear on several lines of one order. Key off that flag — never off the SKU string. The four required spec keys are exactly `machine`, `capacity`, `grams`, `pattern`, matching `Product.specs` (`products.service.ts:45-48`).
 - `OrderItem.drawingNumber` and `OrderItem.promotedProductId` are added by Task 4 but **used by nothing in this plan**. They exist so the mold-promotion feature needs no second migration against the live database. Do not build promotion behaviour here.
@@ -918,13 +919,30 @@ npx prisma validate --schema prisma/schema.prisma
 
 Expected: "The schema at prisma/schema.prisma is valid."
 
-- [ ] **Step 5: Generate the migration without applying it**
+- [ ] **Step 5: Generate the migration with `migrate diff`, not `migrate dev`**
+
+> **Do not run `prisma migrate dev`.** This project's schema grew for a long time
+> under `prisma db push`: the database holds ~35 tables (Projects, quotation
+> workspace, client approval, quote comparison) that no migration file ever
+> created. All 9 migrations on disk are recorded as applied, but replaying them
+> from scratch would not reproduce the database. `migrate dev` sees that as drift
+> and demands `migrate reset`, which destroys all local data. This is pre-existing
+> and is not yours to fix.
+>
+> `migrate diff` sidesteps it by diffing the **live database** against the
+> **target schema**, which yields exactly this task's delta and nothing else.
 
 ```bash
-npx prisma migrate dev --schema prisma/schema.prisma --name order_quotation_stage --create-only
+mkdir -p prisma/migrations/20260727000000_order_quotation_stage
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script > prisma/migrations/20260727000000_order_quotation_stage/migration.sql
+cat prisma/migrations/20260727000000_order_quotation_stage/migration.sql
 ```
 
-This writes `prisma/migrations/<timestamp>_order_quotation_stage/migration.sql` and stops.
+The timestamp `20260727000000` sorts after the last existing migration
+(`20260512000001_todo_person`), which is what `migrate deploy` needs.
 
 - [ ] **Step 6: Append the status backfill to the generated SQL**
 
@@ -937,14 +955,21 @@ UPDATE "order_status_history" SET "old_status" = 'CONFIRMED' WHERE "old_status" 
 UPDATE "order_status_history" SET "new_status" = 'CONFIRMED' WHERE "new_status" = 'NEW';
 ```
 
-Also confirm the generated SQL contains `DROP NOT NULL` for `order_number` and `factory_order_number`. If Prisma emitted `DROP COLUMN` / `ADD COLUMN` for either, replace that pair with:
+Then verify the generated SQL against this expected shape. It was produced from
+this exact database on 2026-07-27 and should match:
 
-```sql
-ALTER TABLE "orders" ALTER COLUMN "order_number" DROP NOT NULL;
-ALTER TABLE "orders" ALTER COLUMN "factory_order_number" DROP NOT NULL;
-```
+- `DROP INDEX "order_items_order_id_product_id_key"` — the unique constraint going away
+- `ALTER TABLE "order_items" ADD COLUMN` for `description`, `drawing_number`, `order_index`, `promoted_product_id`, `specs`, `unit_label`, `unit_price`
+- `ALTER TABLE "orders" ADD COLUMN "confirmed_at"`, `ADD COLUMN "quote_number"`, and crucially **`ALTER COLUMN "order_number" DROP NOT NULL`** and the same for `factory_order_number`
+- `ALTER TABLE "orders" ALTER COLUMN "status" SET DEFAULT 'QUOTATION'`
+- `ALTER TABLE "products" ADD COLUMN "requires_line_specs"`
+- `CREATE TABLE "order_quotations"` with its unique index and foreign key
+- `CREATE INDEX "order_items_order_id_idx"`, `CREATE UNIQUE INDEX "orders_quote_number_key"`
 
-Dropping those columns would destroy every existing order number.
+**If you see `DROP COLUMN` against `orders` or `order_items`, stop and report
+BLOCKED.** Dropping `order_number` or `factory_order_number` would destroy every
+existing order number in production. The expected output contains no `DROP
+COLUMN` at all — only the one `DROP INDEX` listed above.
 
 - [ ] **Step 6b: Create the mold placeholder product in the migration**
 
@@ -991,20 +1016,40 @@ Expected: a product with `requiresLineSpecs: true` and a non-null `categoryId`.
 If it prints `null`, the silicone category is missing — create it through the
 Products UI, then re-run the INSERT.
 
-- [ ] **Step 7: Apply it locally and verify**
+- [ ] **Step 7: Apply it locally and record it as applied**
+
+Again, **not** `migrate dev`. Execute the file directly, then tell Prisma's
+migration history it has been applied, so `migrate deploy` will not try to
+re-run it later:
 
 ```bash
-npx prisma migrate dev --schema prisma/schema.prisma
+npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260727000000_order_quotation_stage/migration.sql
+npx prisma migrate resolve --schema prisma/schema.prisma --applied 20260727000000_order_quotation_stage
 npx prisma generate --schema prisma/schema.prisma
 ```
 
-Then check no `NEW` rows survive:
+If `db execute` fails partway, the migration is half-applied — report BLOCKED with
+the exact error and the statement it failed on. Do **not** re-run the file from
+the top; re-running `ADD COLUMN` will error on the columns that already landed.
+
+Then verify the data with a real query:
 
 ```bash
-npx prisma studio --schema prisma/schema.prisma
+node -e "
+const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();
+(async()=>{
+  const byStatus=await p.order.groupBy({by:['status'],_count:true});
+  console.log('orders by status:',JSON.stringify(byStatus));
+  const stale=await p.orderStatusHistory.count({where:{OR:[{oldStatus:'NEW'},{newStatus:'NEW'}]}});
+  console.log('stale NEW history rows:',stale);
+  console.log('placeholder:',await p.product.findUnique({where:{sku:'SIL-THF-NEWMOLD'},select:{id:true,nameEn:true,requiresLineSpecs:true,categoryId:true,subcategoryId:true}}));
+  await p.\$disconnect();
+})()"
 ```
 
-Filter `orders` by `status = NEW`. Expected: zero rows.
+Expected: **no `NEW` bucket** in the status counts, `stale NEW history rows: 0`,
+and a placeholder product with `requiresLineSpecs: true` and non-null category
+and subcategory ids. Paste this output into your report.
 
 - [ ] **Step 8: Commit**
 
@@ -3477,6 +3522,25 @@ git archive --format=tar main apps prisma package.json package-lock.json tsconfi
 scp -i ~/.ssh/hqq_oms_ed25519 deploy.tar.gz root@46.224.197.38:/tmp/
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 "tar xzf /tmp/deploy.tar.gz -C /opt/hqq-oms"
 ```
+
+- [ ] **Step 3b: Pre-flight the migration against production**
+
+This repo's migration history drifted from its databases under `db push`
+(see Global Constraints). `migrate deploy` does not drift-check — it simply
+applies pending migrations — so confirm production is in the state this
+migration expects before running it.
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT migration_name FROM _prisma_migrations ORDER BY started_at;\" -c \"SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name='orders' AND column_name IN ('order_number','factory_order_number','quote_number','confirmed_at');\""
+```
+
+Expected: the same 9 migrations as local, `20260727000000_order_quotation_stage`
+**absent**, `order_number` and `factory_order_number` present and `NO` (not
+nullable), `quote_number` and `confirmed_at` absent.
+
+If the migration list differs from local, or the new columns already exist, stop
+and reconcile before going further.
 
 - [ ] **Step 4: Migrate, build, restart**
 
