@@ -2368,7 +2368,59 @@ Print handler:
 
 The 600 ms delay lets the letterhead and the web fonts load; printing sooner produces a blank header. The toolbar sits above the form with `className="print:hidden"` and holds Back, the AR⇄EN toggle, and Print.
 
-- [ ] **Step 4: Add the same font link to the app page**
+- [ ] **Step 4: Add and remove lines while the quote is unconfirmed**
+
+Editing a quotation means more than changing numbers — the paper form has
+`+ إضافة بند` and a per-row `✕`. Both reuse endpoints that already exist
+(`orders.controller.ts:166` and `:192`); neither needs new API work.
+
+Render these only when `!locked`, and hide them in print (the source CSS already
+hides `.table-actions` and `.btn-del` under `@media print`).
+
+Per row, in the last cell:
+
+```tsx
+                    <td className="action">
+                      <button
+                        type="button"
+                        className="btn-del"
+                        title={I18N[lang].thDel}
+                        onClick={() => removeLine.mutate(line.id)}
+                      >
+                        ✕
+                      </button>
+                    </td>
+```
+
+Below the table, a `.table-actions` bar holding an add-item control. A line must
+stay tied to a product — `OrderItem.productId` is required, and the factory sheet
+and inventory both read it — so "add item" opens a product search rather than
+creating a free-text row:
+
+```tsx
+  const addLine = useMutation({
+    mutationFn: (productId: string) =>
+      api.post(`/api/v1/orders/${id}/items`, { productId, quantity: 1 }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quotation', id] }),
+    onError: (err: Error) => addToast(err.message, 'error'),
+  });
+
+  const removeLine = useMutation({
+    mutationFn: (itemId: string) =>
+      api.delete(`/api/v1/orders/${id}/items/${itemId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quotation', id] }),
+    onError: (err: Error) => addToast(err.message, 'error'),
+  });
+```
+
+For the picker, reuse the `SearchableSelect` from `@/components/ui` fed by
+`api.get<{ data: { id: string; sku: string; nameEn: string }[] }>('/api/v1/products', { search, pageSize: '20' })`,
+exactly as `orders/new/page.tsx` does. Selecting a product calls `addLine`.
+
+Deleting the last remaining line must be prevented — an order with no items
+cannot be confirmed. Disable the `✕` when `draft.lines.length === 1`.
+
+- [ ] **Step 5: Add the same font link to the app page**
 
 So the on-screen form matches the printed one, add to the top of the returned JSX, next to the `<style>` tag:
 
@@ -2380,7 +2432,7 @@ So the on-screen form matches the printed one, add to the top of the returned JS
       />
 ```
 
-- [ ] **Step 5: Verify against the original**
+- [ ] **Step 6: Verify against the original**
 
 ```bash
 npx tsc --noEmit -p apps/web/tsconfig.json 2>&1 | tail -30
@@ -2396,8 +2448,10 @@ Open the order you created in Task 9 at `/orders/<id>/quotation`. Then open `C:\
 5. Signature boxes and the dark footer with the IBAN
 6. Toggle to English — direction flips to LTR and every label changes
 7. Edit a price, wait a second, reload the page — the change persisted
+8. Add a line via the picker and delete a line; the `✕` is disabled at one line
+9. Neither control appears in the printed output
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add apps/web/public/quotation-letterhead.jpg "apps/web/src/app/(dashboard)/orders/[id]/quotation"
