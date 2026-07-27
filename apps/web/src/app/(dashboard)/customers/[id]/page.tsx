@@ -100,7 +100,8 @@ interface Customer {
 
 interface OrderRow {
   id: string;
-  orderNumber: string;
+  orderNumber: string | null;
+  quoteNumber: string | null;
   status: string;
   expectedDeliveryDate: string | null;
   createdAt: string;
@@ -272,7 +273,11 @@ export default function CustomerDetailPage() {
   const files = filesData?.data ?? [];
 
   const orderColumns: DataTableColumn<OrderRow>[] = [
-    { key: 'orderNumber', header: 'Order #' },
+    {
+      key: 'orderNumber',
+      header: 'Order #',
+      render: (row) => row.orderNumber ?? row.quoteNumber ?? '—',
+    },
     { key: 'status', header: 'Status' },
     {
       key: 'expectedDeliveryDate',

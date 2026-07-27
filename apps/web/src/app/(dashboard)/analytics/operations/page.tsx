@@ -6,7 +6,7 @@ import { Card, Loading, EmptyState } from '@/components/ui';
 
 interface StatusDwellRow { status: string; averageDays: number; samples: number }
 interface CycleTimeRow { orderId: string; orderNumber: string; days: number }
-interface OverdueOrderRow { orderId: string; orderNumber: string; customerName: string; expectedDeliveryDate: string; daysOverdue: number }
+interface OverdueOrderRow { orderId: string; orderNumber: string | null; quoteNumber: string | null; customerName: string; expectedDeliveryDate: string; daysOverdue: number }
 interface FactoryLeadTimeRow { factoryId: string; factoryName: string; orderCount: number; completedCount: number; averageLeadDays: number | null }
 
 export default function OperationsAnalyticsPage() {
@@ -86,7 +86,7 @@ export default function OperationsAnalyticsPage() {
                 <tbody>
                   {(overdue ?? []).map((o) => (
                     <tr key={o.orderId} className="border-b border-gray-100">
-                      <td className="px-4 py-2 font-mono text-xs">{o.orderNumber}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{o.orderNumber ?? o.quoteNumber ?? '—'}</td>
                       <td className="px-4 py-2">{o.customerName}</td>
                       <td className="px-4 py-2 text-right font-semibold text-red-600">{o.daysOverdue}</td>
                     </tr>

@@ -44,6 +44,7 @@ export class OperationsService {
     const rows = await this.prisma.$queryRaw<RawOverdueOrderRow[]>`
       SELECT o.id            AS "orderId",
              o.order_number  AS "orderNumber",
+             o.quote_number  AS "quoteNumber",
              c.name          AS "customerName",
              o.expected_delivery_date AS "expectedDeliveryDate",
              FLOOR(EXTRACT(EPOCH FROM (NOW() - o.expected_delivery_date)) / 86400)::int AS "daysOverdue"

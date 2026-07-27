@@ -72,8 +72,9 @@ interface OrderItem {
 
 interface OrderDetail {
   id: string;
-  orderNumber: string;
-  factoryOrderNumber: string;
+  orderNumber: string | null;
+  factoryOrderNumber: string | null;
+  quoteNumber: string | null;
   orderType: string;
   status: string;
   expectedDeliveryDate: string | null;
@@ -487,10 +488,12 @@ export default function OrderDetailPage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              {order.orderNumber}
+              {order.orderNumber ?? order.quoteNumber ?? '—'}
             </h1>
             <p className="text-sm text-gray-500">
-              Factory: {order.factoryOrderNumber}
+              {order.factoryOrderNumber
+                ? `Factory: ${order.factoryOrderNumber}`
+                : 'Not confirmed yet — no factory order number'}
             </p>
           </div>
         </div>
@@ -501,6 +504,23 @@ export default function OrderDetailPage() {
           >
             {order.status.replace(/_/g, ' ')}
           </Badge>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => router.push(`/orders/${id}/quotation`)}
+          >
+            <FileText className="h-4 w-4" />
+            Quotation
+          </Button>
+          {order.status === 'QUOTATION' && hasPermission(Permission.CHANGE_STATUS) && (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => statusMutation.mutate({ newStatus: 'REJECTED' })}
+            >
+              Mark rejected
+            </Button>
+          )}
           {canChangeStatus && (
             <Select
               options={[

@@ -46,6 +46,7 @@ export class OrdersController {
     @Query('nearDeadline') nearDeadline?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.ordersService.list({
       status,
@@ -58,6 +59,7 @@ export class OrdersController {
       nearDeadline: nearDeadline === 'true',
       page: page ? parseInt(page, 10) : undefined,
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      sort,
     });
   }
 

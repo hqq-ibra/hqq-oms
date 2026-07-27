@@ -63,7 +63,8 @@ export interface StatusDwellRow {
 
 export interface OverdueOrderRow {
   orderId: string;
-  orderNumber: string;
+  orderNumber: string | null;
+  quoteNumber: string | null;
   customerName: string;
   expectedDeliveryDate: string;
   daysOverdue: number;

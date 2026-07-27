@@ -21,6 +21,7 @@ export interface OrderListFilters {
   search?: string;
   delayed?: boolean;
   nearDeadline?: boolean;
+  sort?: string;
   page?: number;
   pageSize?: number;
 }
@@ -83,13 +84,14 @@ export class OrdersService {
         where,
         skip,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: filters.sort === 'oldest' ? 'asc' : 'desc' },
         include: {
           customer: true,
           product: true,
           factory: true,
           assignedUser: { select: { id: true, name: true, email: true, role: true } },
           items: { include: { product: true } },
+          quotation: { select: { validUntil: true } },
         },
       }),
       this.prisma.order.count({ where }),
