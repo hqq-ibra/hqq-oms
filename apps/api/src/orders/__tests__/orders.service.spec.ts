@@ -524,9 +524,24 @@ describe('OrdersService quotation endpoints', () => {
     ).rejects.toThrow(/non-negative/i);
   });
 
+  it('refuses a line id that does not belong to this order, and touches nothing', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    // The item exists, but under a different order — findFirst scoped to
+    // { id, orderId: 'o1' } finds no match, exactly as it would for real.
+    prisma.orderItem.findFirst.mockResolvedValue(null);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'foreign-item', unitPrice: 120 }] }),
+    ).rejects.toThrow(/not found/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
   it('saves per-line spec edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
     const { service } = createService(prisma);
 
     await service.updateQuotation('o1', {
@@ -571,6 +586,7 @@ describe('OrdersService quotation endpoints', () => {
   it('saves per-line price edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
     const { service } = createService(prisma);
 
     await service.updateQuotation('o1', {

@@ -783,6 +783,14 @@ export class OrdersService {
         }
       }
 
+      // Same ownership guard as updateItem: without it, a lineId belonging to
+      // a different (possibly locked/CONFIRMED) order could be edited through
+      // this order's URL and status check.
+      const item = await this.prisma.orderItem.findFirst({
+        where: { id: lineId, orderId: id },
+      });
+      if (!item) throw new NotFoundException('Order item not found');
+
       await this.prisma.orderItem.update({
         where: { id: lineId },
         data: lineData,

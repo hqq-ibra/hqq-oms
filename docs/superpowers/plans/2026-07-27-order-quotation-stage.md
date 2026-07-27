@@ -1935,6 +1935,23 @@ Add `formatSpecs` to the `./mold-specs` import in `orders.service.ts`.
 
 Task 10's page consumes this exact shape.
 
+> **Post-implementation correction (fix round 1 code review):** the
+> `updateQuotation` line-update loop below was originally written to call
+> `this.prisma.orderItem.update({ where: { id: lineId }, data: lineData })`
+> using only the client-supplied line id — it never checked that `lineId`
+> actually belongs to the order named in the URL. The method's only
+> ownership/lock check (`order.status !== 'QUOTATION'`) was performed
+> against the *URL's* order, so a caller with `EDIT_ORDERS` could target a
+> `QUOTATION`-status order in the URL while supplying a line id that
+> belongs to a different (even `CONFIRMED`/locked) order, silently
+> mutating that other order's price or quantity and bypassing its lock.
+> `updateItem`, two methods earlier in this same file, already established
+> the fix for exactly this shape of bug: `findFirst({ where: { id: itemId,
+> orderId } })` before writing, throwing `NotFoundException` on a
+> mismatch. Step 1 and Step 3 below are corrected to require and use that
+> same guard for every line update; do not implement the unscoped version
+> described in earlier drafts of this plan.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `apps/api/src/orders/__tests__/orders.service.spec.ts`:
@@ -2058,9 +2075,24 @@ describe('OrdersService quotation endpoints', () => {
     ).rejects.toThrow(/non-negative/i);
   });
 
+  it('refuses a line id that does not belong to this order, and touches nothing', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    // The item exists, but under a different order — findFirst scoped to
+    // { id, orderId: 'o1' } finds no match, exactly as it would for real.
+    prisma.orderItem.findFirst.mockResolvedValue(null);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'foreign-item', unitPrice: 120 }] }),
+    ).rejects.toThrow(/not found/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
   it('saves per-line spec edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
     const { service } = createService(prisma);
 
     await service.updateQuotation('o1', {
@@ -2105,6 +2137,7 @@ describe('OrdersService quotation endpoints', () => {
   it('saves per-line price edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
     const { service } = createService(prisma);
 
     await service.updateQuotation('o1', {
@@ -2272,6 +2305,14 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
           throw new BadRequestException('Unit price must be a non-negative number');
         }
       }
+
+      // Same ownership guard as updateItem: without it, a lineId belonging to
+      // a different (possibly locked/CONFIRMED) order could be edited through
+      // this order's URL and status check.
+      const item = await this.prisma.orderItem.findFirst({
+        where: { id: lineId, orderId: id },
+      });
+      if (!item) throw new NotFoundException('Order item not found');
 
       await this.prisma.orderItem.update({
         where: { id: lineId },
