@@ -241,11 +241,15 @@ export default function QuotationPage() {
   const printRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<QuotationPatch>({});
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True from the moment an edit is queued until its round trip settles
-  // (covers both the debounce window and the in-flight request). The money
-  // display reads the server's authoritative draft.totals / line.lineTotal
-  // whenever this is false, and only overlays the local, instant recompute
-  // while it is true — see displayTotals below.
+  // True from the moment an edit is queued until it is *confirmed saved* —
+  // cleared only by patchMutation's onSuccess (never at dispatch time, never
+  // on error; see the comment above save() for why). Covers the debounce
+  // window, the in-flight request, and — if the save fails — indefinitely
+  // afterward, so the money display never reverts to server numbers that
+  // predate a visible, still-unsaved edit. The money display reads the
+  // server's authoritative draft.totals / line.lineTotal whenever this is
+  // false, and only overlays the local, instant recompute while it is true —
+  // see displayTotals below.
   const [hasUnsavedEdit, setHasUnsavedEdit] = useState(false);
 
   // Seed (and reseed) the local draft whenever the server data changes.
@@ -265,6 +269,10 @@ export default function QuotationPage() {
       api.patch<QuotationView>(`/api/v1/orders/${id}/quotation`, payload),
     onSuccess: (response) => {
       setDraft(response);
+      // Only a *successful* round trip may hand money display back to the
+      // server's numbers — see hasUnsavedEdit's declaration and the note
+      // above save() below. A failed save leaves this true, deliberately.
+      setHasUnsavedEdit(false);
       queryClient.invalidateQueries({ queryKey: ['order', id] });
     },
     onError: (err: Error) => addToast(err.message, 'error'),
@@ -288,14 +296,24 @@ export default function QuotationPage() {
   // same window are both flushed, instead of the later call silently
   // clobbering the earlier one.
   //
+  // hasUnsavedEdit is set true here and only ever cleared by patchMutation's
+  // onSuccess (never at dispatch time, never on error) — see displayTotals
+  // below. That means a failed save (network error, 500, or a 409 because
+  // the order was confirmed in another tab) leaves it engaged: the visible
+  // inputs still show the user's unsaved edit, and the overlay keeps the
+  // displayed totals consistent with those inputs instead of silently
+  // reverting to server numbers that predate the edit. It stays engaged
+  // until either the user edits again (which re-dispatches) or they navigate
+  // away — this file deliberately does not auto-retry or discard the edit.
+  //
   // Known accepted tradeoff (ledgered, not engineered around): if two save
   // cycles overlap — a second edit's debounce elapses and dispatches while an
-  // earlier request is still in flight — and their responses settle out of
-  // order, the client can briefly display a slightly stale totals/lines
-  // snapshot. This cannot corrupt persisted data: updateQuotation applies
-  // per-field partial Prisma updates, so out-of-order responses only affect
-  // transient client display, and the next successful round trip (or reload)
-  // self-heals it.
+  // earlier request is still in flight — and their *successes* settle out of
+  // order, the earlier one's onSuccess can clear hasUnsavedEdit and reset
+  // `draft` before the later edit's own request has completed. This cannot
+  // corrupt persisted data: updateQuotation applies per-field partial Prisma
+  // updates, so out-of-order responses only affect transient client display,
+  // and the next successful round trip (or reload) self-heals it.
   const save = (patch: QuotationPatch) => {
     if (locked) return;
     setHasUnsavedEdit(true);
@@ -323,9 +341,13 @@ export default function QuotationPage() {
       const payload = pendingRef.current;
       pendingRef.current = {};
       timerRef.current = null;
-      setHasUnsavedEdit(false);
       if (Object.keys(payload).length > 0) {
         patchMutation.mutate(payload);
+      } else {
+        // Nothing actually queued (shouldn't normally happen) — there is no
+        // mutation left to resolve this, so nothing will ever clear the flag
+        // otherwise.
+        setHasUnsavedEdit(false);
       }
     }, 800);
   };
@@ -446,13 +468,17 @@ export default function QuotationPage() {
 
   const t = I18N[lang];
 
-  // Money display authority: while an edit is queued or its save is in
-  // flight, show the instant local recompute so numbers move as you type;
-  // the moment a round trip completes, patchMutation's onSuccess replaces
-  // `draft` (including `totals` and every line's `lineTotal`) with the
-  // server's own numbers, and this flips back to reading those — never a
+  // Money display authority: while an edit is queued, its save is in flight,
+  // or a prior save attempt failed and hasn't been superseded by a
+  // successful one, show the instant local recompute so numbers move as you
+  // type and never contradict the visible inputs. The moment a save actually
+  // *succeeds*, patchMutation's onSuccess replaces `draft` (including
+  // `totals` and every line's `lineTotal`) with the server's own numbers and
+  // clears hasUnsavedEdit, flipping this back to reading those — never a
   // second, independently-computed source of truth for money once a save
-  // has actually landed.
+  // has actually landed. Always false while locked, since save() early-
+  // returns before ever setting hasUnsavedEdit — the confirmed/print view
+  // renders server numbers unconditionally.
   const showLiveOverlay = hasUnsavedEdit || patchMutation.isPending;
   const displayTotals: QuotationTotals = showLiveOverlay ? liveTotals : draft.totals;
   const lineTotal = (line: QuotationLine, index: number) =>
