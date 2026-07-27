@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { OrdersService } from '../orders.service';
 
 type Mock = jest.Mock;
@@ -404,5 +405,216 @@ describe('OrdersService.changeStatus — confirming', () => {
     expect(data.status).toBe('REJECTED');
     expect(data.orderNumber).toBeUndefined();
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrdersService quotation endpoints', () => {
+  const fullOrder = {
+    id: 'o1',
+    quoteNumber: 'QT-2026-0001',
+    orderNumber: null,
+    status: 'QUOTATION',
+    customer: { name: 'Acme Dates' },
+    items: [
+      { id: 'i1', quantity: 2, unitPrice: 100, unitLabel: 'عدد', description: null, orderIndex: 0, specs: null, product: { nameEn: 'Tray 500g', nameAr: null, requiresLineSpecs: false } },
+    ],
+    quotation: {
+      quoteDate: new Date('2026-07-27'),
+      validUntil: new Date('2026-08-10'),
+      payMethod: 'نقداً / تحويل بنكي',
+      clientBlock: 'Acme Dates\nDammam',
+      contact: '0500000000',
+      attn: 'Khaled',
+      notes: null,
+      discountAmount: 0,
+      vatEnabled: true,
+      vatPercent: 15,
+      language: 'ar',
+    },
+  };
+
+  it('returns the lines with server-computed totals', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    const view = await service.getQuotation('o1');
+
+    expect(view.quoteNumber).toBe('QT-2026-0001');
+    expect(view.lines[0].lineTotal).toBe(200);
+    expect(view.totals.grandTotal).toBe(230);
+  });
+
+  it('falls back to the product name when a line has no description', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    const view = await service.getQuotation('o1');
+
+    expect(view.lines[0].description).toBe('Tray 500g');
+  });
+
+  it('appends the specs to a mold line description', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: null, orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    const view = await service.getQuotation('o1');
+
+    expect(view.lines[0].description).toBe(
+      'New Mold — Silicone Thermoforming\nMV · 6K · 250 · Rose',
+    );
+    expect(view.lines[0].requiresLineSpecs).toBe(true);
+    expect(view.lines[0].specs).toEqual({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' });
+  });
+
+  it('lets an explicit description override the spec label', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: 'Ramadan crescent mold', orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    expect((await service.getQuotation('o1')).lines[0].description).toBe(
+      'Ramadan crescent mold',
+    );
+  });
+
+  it('refuses a quantity below one', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', quantity: 0 }] }),
+    ).rejects.toThrow(/at least 1/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a negative unit price', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: -5 }] }),
+    ).rejects.toThrow(/non-negative/i);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: NaN }] }),
+    ).rejects.toThrow(/non-negative/i);
+  });
+
+  it('saves per-line spec edits', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [{ id: 'i1', specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' } }],
+    });
+
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'i1' },
+        data: expect.objectContaining({
+          specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' },
+        }),
+      }),
+    );
+  });
+
+  it('refuses to edit a quotation once the order is confirmed', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({ ...fullOrder, status: 'CONFIRMED' });
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { discountAmount: 50 }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('saves header edits while still a quotation', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', { discountAmount: 50, notes: 'Deposit 50%' });
+
+    expect(prisma.orderQuotation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orderId: 'o1' },
+        data: expect.objectContaining({ discountAmount: 50, notes: 'Deposit 50%' }),
+      }),
+    );
+  });
+
+  it('saves per-line price edits', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [{ id: 'i1', unitPrice: 120, quantity: 3, unitLabel: 'كرتون', description: 'Custom' }],
+    });
+
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'i1' },
+        data: expect.objectContaining({ unitPrice: 120, quantity: 3 }),
+      }),
+    );
+  });
+});
+
+describe('OrdersService.addItem', () => {
+  function setupAdd(requiresLineSpecs: boolean) {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      id: 'o1', customerId: 'c1', status: 'QUOTATION', items: [], costs: [], statusHistory: [],
+    });
+    prisma.product.findUnique.mockResolvedValue({ requiresLineSpecs });
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', quantity: 1 });
+    prisma.orderItem.count = jest.fn().mockResolvedValue(2);
+    prisma.orderItem.create.mockResolvedValue({ id: 'i2' });
+    prisma.orderItem.update.mockResolvedValue({ id: 'i1', quantity: 2 });
+    return { prisma, ...createService(prisma) };
+  }
+
+  it('merges an ordinary product into the existing line', async () => {
+    const { prisma, service } = setupAdd(false);
+    await service.addItem('o1', { productId: 'p1', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).toHaveBeenCalled();
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+  });
+
+  it('always starts a new line for a placeholder product', async () => {
+    const { prisma, service } = setupAdd(true);
+    await service.addItem('o1', { productId: 'mold', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(prisma.orderItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productId: 'mold', orderIndex: 2 }),
+      }),
+    );
   });
 });

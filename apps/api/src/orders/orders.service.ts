@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WsGateway } from '../ws/ws.gateway';
@@ -9,7 +10,7 @@ import { isValidTransition } from './order-workflow';
 import { nextSequenceNumber } from './sequence';
 import { buildQuotationDefaults } from './quotation-defaults';
 import { computeQuotationTotals } from './quotation-totals';
-import { findIncompleteSpecLines } from './mold-specs';
+import { findIncompleteSpecLines, formatSpecs } from './mold-specs';
 
 export interface OrderListFilters {
   status?: string;
@@ -518,9 +519,19 @@ export class OrdersService {
 
   async addItem(orderId: string, dto: { productId: string; quantity: number }, userId: string) {
     const order = await this.getById(orderId);
-    const existing = await this.prisma.orderItem.findFirst({
-      where: { orderId, productId: dto.productId },
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { requiresLineSpecs: true },
     });
+    if (!product) throw new NotFoundException('Product not found');
+
+    // A placeholder is a new design every time; ordinary products merge.
+    const existing = product.requiresLineSpecs
+      ? null
+      : await this.prisma.orderItem.findFirst({
+          where: { orderId, productId: dto.productId },
+        });
+
     if (existing) {
       const updated = await this.prisma.orderItem.update({
         where: { id: existing.id },
@@ -535,8 +546,14 @@ export class OrdersService {
       this.wsGateway.emit('order.updated', { orderId });
       return updated;
     }
+    const lineCount = await this.prisma.orderItem.count({ where: { orderId } });
     const item = await this.prisma.orderItem.create({
-      data: { orderId, productId: dto.productId, quantity: dto.quantity },
+      data: {
+        orderId,
+        productId: dto.productId,
+        quantity: dto.quantity,
+        orderIndex: lineCount,
+      },
       include: { product: { include: { factory: true } } },
     });
     await this.prisma.customerProduct.upsert({
@@ -625,5 +642,154 @@ export class OrdersService {
         fileUrl: f.fileUrl,
       })),
     };
+  }
+
+  async getQuotation(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        customer: true,
+        quotation: true,
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: { product: true },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const q = order.quotation;
+    const discountAmount = Number(q?.discountAmount ?? 0);
+    const vatEnabled = q?.vatEnabled ?? true;
+    const vatPercent = Number(q?.vatPercent ?? 15);
+
+    const totals = computeQuotationTotals({
+      lines: order.items.map((item) => ({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
+      })),
+      discountAmount,
+      vatEnabled,
+      vatPercent,
+    });
+
+    return {
+      orderId: order.id,
+      quoteNumber: order.quoteNumber,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      quoteDate: q?.quoteDate ?? null,
+      validUntil: q?.validUntil ?? null,
+      payMethod: q?.payMethod ?? '',
+      clientBlock: q?.clientBlock ?? order.customer.name,
+      contact: q?.contact ?? null,
+      attn: q?.attn ?? null,
+      notes: q?.notes ?? null,
+      discountAmount,
+      vatEnabled,
+      vatPercent,
+      language: q?.language ?? 'ar',
+      customerName: order.customer.name,
+      lines: order.items.map((item, index) => {
+        const specLabel = formatSpecs(item.specs);
+        return {
+          id: item.id,
+          // An explicit override wins; otherwise a mold line shows its specs
+          // under the product name so the customer sees what is being quoted.
+          description:
+            item.description ??
+            (specLabel ? `${item.product.nameEn}\n${specLabel}` : item.product.nameEn),
+          productName: item.product.nameEn,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: (item.specs ?? null) as Record<string, string> | null,
+          quantity: item.quantity,
+          unitLabel: item.unitLabel,
+          unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
+          lineTotal: totals.lineTotals[index],
+        };
+      }),
+      totals,
+    };
+  }
+
+  async updateQuotation(
+    id: string,
+    dto: Partial<{
+      quoteDate: string;
+      validUntil: string | null;
+      payMethod: string;
+      clientBlock: string;
+      contact: string | null;
+      attn: string | null;
+      notes: string | null;
+      discountAmount: number;
+      vatEnabled: boolean;
+      vatPercent: number;
+      language: string;
+      lines: {
+        id: string;
+        quantity?: number;
+        unitPrice?: number | null;
+        unitLabel?: string;
+        description?: string | null;
+        specs?: Record<string, string> | null;
+      }[];
+    }>,
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    // A quote that has been sent and accepted must not change under the customer.
+    if (order.status !== 'QUOTATION') {
+      throw new ConflictException(
+        'This quotation is locked because the order is already confirmed',
+      );
+    }
+
+    const { lines, quoteDate, validUntil, ...rest } = dto;
+
+    const headerData: Record<string, unknown> = { ...rest };
+    if (quoteDate !== undefined) headerData.quoteDate = new Date(quoteDate);
+    if (validUntil !== undefined) {
+      headerData.validUntil = validUntil ? new Date(validUntil) : null;
+    }
+
+    if (Object.keys(headerData).length > 0) {
+      await this.prisma.orderQuotation.update({
+        where: { orderId: id },
+        data: headerData,
+      });
+    }
+
+    for (const line of lines ?? []) {
+      const { id: lineId, ...lineData } = line;
+      if (Object.keys(lineData).length === 0) continue;
+
+      // Same money guard as create(): these feed computeQuotationTotals directly.
+      if (lineData.quantity !== undefined) {
+        if (!Number.isFinite(lineData.quantity) || lineData.quantity < 1) {
+          throw new BadRequestException('Quantity must be at least 1');
+        }
+      }
+      if (lineData.unitPrice !== undefined && lineData.unitPrice !== null) {
+        // Number.isFinite, not just `< 0`: the controller casts the raw body
+        // with no class-validator DTO, so NaN and Infinity can reach here and
+        // would poison every downstream total.
+        if (!Number.isFinite(lineData.unitPrice) || lineData.unitPrice < 0) {
+          throw new BadRequestException('Unit price must be a non-negative number');
+        }
+      }
+
+      await this.prisma.orderItem.update({
+        where: { id: lineId },
+        data: lineData,
+      });
+    }
+
+    this.wsGateway.emit('order.updated', { orderId: id });
+    return this.getQuotation(id);
   }
 }

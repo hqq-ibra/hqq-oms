@@ -251,4 +251,24 @@ export class OrdersController {
   getFactorySheet(@Param('id') id: string) {
     return this.ordersService.getFactorySheet(id);
   }
+
+  @Get(':id/quotation')
+  getQuotation(@Param('id') id: string) {
+    return this.ordersService.getQuotation(id);
+  }
+
+  @Patch(':id/quotation')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions('EDIT_ORDERS')
+  @UseInterceptors(AuditInterceptor)
+  @Audit('ORDER')
+  updateQuotation(
+    @Param('id') id: string,
+    @Body() dto: Record<string, unknown>,
+  ) {
+    return this.ordersService.updateQuotation(
+      id,
+      dto as Parameters<OrdersService['updateQuotation']>[1],
+    );
+  }
 }
