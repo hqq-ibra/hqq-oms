@@ -1100,6 +1100,10 @@ function createPrismaMock() {
   mock.$transaction = jest.fn((arg: unknown) =>
     Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(mock),
   );
+  // Tagged-template call: invoked as mock.$executeRaw`...${a}...${b}`, so each
+  // recorded call is [stringsArray, ...substitutions]. Added for Task 6's
+  // atomic stock decrement — see that task's fix-round note.
+  mock.$executeRaw = jest.fn().mockResolvedValue(1);
   return mock;
 }
 
@@ -1495,6 +1499,21 @@ git commit -m "feat(orders): create orders as unconfirmed quotations"
 - Consumes: `computeQuotationTotals` (Task 2), `nextSequenceNumber` and `findIncompleteSpecLines` (Task 3)
 - Produces: `changeStatus` unchanged signature; on `CONFIRMED` it validates mold specs, assigns numbers, sets `confirmedAt`, decrements stock and upserts the `SELLING_PRICE` cost.
 
+> **Post-implementation correction (fix round 1 code review):** the stock
+> decrement below was originally written as `tx.product.findUnique` (read
+> `inventory`) → `Math.min(item.quantity, inventory)` in JS → a relative
+> Prisma `decrement`. That has a TOCTOU race: two concurrent `CONFIRMED`
+> transactions touching the same product can each read the same
+> pre-decrement value, each independently clamp against it, and both apply
+> their own relative decrement — driving `inventory` negative despite the
+> clamp, because the database never re-checks the value at write time.
+> `Product.inventory` has no DB `CHECK` constraint, so nothing else stops it.
+> The code and tests below are corrected to use a single atomic
+> `tx.$executeRaw` statement with `GREATEST(inventory - N, 0)`, which clamps
+> and writes in one server-side operation with no read-then-write window.
+> Step 1 and Step 3 below show the corrected version; do not implement the
+> read-then-clamp version described in earlier drafts of this plan.
+
 Add `findIncompleteSpecLines` to the imports at the top of `orders.service.ts`:
 
 ```ts
@@ -1550,7 +1569,6 @@ describe('OrdersService.changeStatus — confirming', () => {
     prisma.order.update.mockImplementation(({ data }: { data: any }) =>
       Promise.resolve({ ...order, ...data }),
     );
-    prisma.product.findUnique.mockResolvedValue({ inventory: 10 });
     return { prisma, ...createService(prisma) };
   }
 
@@ -1565,28 +1583,38 @@ describe('OrdersService.changeStatus — confirming', () => {
     expect(data.confirmedAt).toBeInstanceOf(Date);
   });
 
-  it('decrements stock only once the customer commits', async () => {
+  it('decrements stock only once the customer commits, via one atomic statement per line', async () => {
     const { prisma, service } = setup();
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'p1' },
-        data: { inventory: { decrement: 2 } },
-      }),
+    // The decrement-and-floor happens in a single UPDATE (see below), not a
+    // read followed by a separate write, so there is no gap for a concurrent
+    // confirmation to read a stale value.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, quantity, productId] = (prisma.$executeRaw as Mock).mock.calls[0];
+    expect(Array.isArray(sql) ? sql.join('') : String(sql)).toContain(
+      'UPDATE products SET inventory = GREATEST(inventory -',
     );
+    expect(quantity).toBe(2);
+    expect(productId).toBe('p1');
   });
 
-  it('never drives inventory negative', async () => {
+  it('floors the decrement at zero inside the SQL statement itself', async () => {
+    // This only proves the statement text asks the database to floor the
+    // result at zero (`GREATEST(inventory - N, 0)`) — a mock cannot exercise
+    // concurrent transactions, so it cannot prove the invariant holds under
+    // real concurrent load. That guarantee now comes from the single UPDATE
+    // being one atomic, row-locking statement, not from anything assertable
+    // here.
     const { prisma, service } = setup();
-    prisma.product.findUnique.mockResolvedValue({ inventory: 1 });
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { inventory: { decrement: 1 } } }),
-    );
+    const [sql] = (prisma.$executeRaw as Mock).mock.calls[0];
+    const text = Array.isArray(sql) ? sql.join('') : String(sql);
+    expect(text).toContain('GREATEST(inventory -');
+    expect(text).toContain(', 0)');
   });
 
   it('records the quote grand total as the selling price', async () => {
@@ -1635,7 +1663,7 @@ describe('OrdersService.changeStatus — confirming', () => {
 
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
     expect(prisma.orderCost.create).not.toHaveBeenCalled();
   });
 
@@ -1648,7 +1676,7 @@ describe('OrdersService.changeStatus — confirming', () => {
       /grams/,
     );
     expect(prisma.order.update).not.toHaveBeenCalled();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('confirms a mold line once all four specs are set', async () => {
@@ -1691,7 +1719,7 @@ describe('OrdersService.changeStatus — confirming', () => {
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.status).toBe('REJECTED');
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 });
 ```
@@ -1815,19 +1843,16 @@ Replace the whole `changeStatus` method with:
       });
 
       if (isConfirming) {
+        // A read-then-clamp-then-relative-decrement would race: two
+        // concurrent confirmations touching the same product could both read
+        // the same starting inventory, each clamp against it, and both apply
+        // their own decrement — driving the column negative despite the
+        // clamp, since Postgres never re-checks the value at write time. A
+        // single UPDATE that both reads and clamps server-side has no such
+        // window: the row lock taken for the write serializes concurrent
+        // updates to the same product.
         for (const item of order.items) {
-          const product = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { inventory: true },
-          });
-          if (product && product.inventory > 0) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: {
-                inventory: { decrement: Math.min(item.quantity, product.inventory) },
-              },
-            });
-          }
+          await tx.$executeRaw`UPDATE products SET inventory = GREATEST(inventory - ${item.quantity}, 0) WHERE id = ${item.productId}`;
         }
 
         // Revenue in Reports and Analytics is the SELLING_PRICE cost row

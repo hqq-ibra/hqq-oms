@@ -23,6 +23,9 @@ function createPrismaMock() {
   mock.$transaction = jest.fn((arg: unknown) =>
     Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(mock),
   );
+  // Tagged-template call: invoked as mock.$executeRaw`...${a}...${b}`, so each
+  // recorded call is [stringsArray, ...substitutions].
+  mock.$executeRaw = jest.fn().mockResolvedValue(1);
   return mock;
 }
 
@@ -250,7 +253,6 @@ describe('OrdersService.changeStatus — confirming', () => {
     prisma.order.update.mockImplementation(({ data }: { data: any }) =>
       Promise.resolve({ ...order, ...data }),
     );
-    prisma.product.findUnique.mockResolvedValue({ inventory: 10 });
     return { prisma, ...createService(prisma) };
   }
 
@@ -265,28 +267,38 @@ describe('OrdersService.changeStatus — confirming', () => {
     expect(data.confirmedAt).toBeInstanceOf(Date);
   });
 
-  it('decrements stock only once the customer commits', async () => {
+  it('decrements stock only once the customer commits, via one atomic statement per line', async () => {
     const { prisma, service } = setup();
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'p1' },
-        data: { inventory: { decrement: 2 } },
-      }),
+    // The decrement-and-floor happens in a single UPDATE (see below), not a
+    // read followed by a separate write, so there is no gap for a concurrent
+    // confirmation to read a stale value.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, quantity, productId] = (prisma.$executeRaw as Mock).mock.calls[0];
+    expect(Array.isArray(sql) ? sql.join('') : String(sql)).toContain(
+      'UPDATE products SET inventory = GREATEST(inventory -',
     );
+    expect(quantity).toBe(2);
+    expect(productId).toBe('p1');
   });
 
-  it('never drives inventory negative', async () => {
+  it('floors the decrement at zero inside the SQL statement itself', async () => {
+    // This only proves the statement text asks the database to floor the
+    // result at zero (`GREATEST(inventory - N, 0)`) — a mock cannot exercise
+    // concurrent transactions, so it cannot prove the invariant holds under
+    // real concurrent load. That guarantee now comes from the single UPDATE
+    // being one atomic, row-locking statement, not from anything assertable
+    // here.
     const { prisma, service } = setup();
-    prisma.product.findUnique.mockResolvedValue({ inventory: 1 });
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { inventory: { decrement: 1 } } }),
-    );
+    const [sql] = (prisma.$executeRaw as Mock).mock.calls[0];
+    const text = Array.isArray(sql) ? sql.join('') : String(sql);
+    expect(text).toContain('GREATEST(inventory -');
+    expect(text).toContain(', 0)');
   });
 
   it('records the quote grand total as the selling price', async () => {
@@ -335,7 +347,7 @@ describe('OrdersService.changeStatus — confirming', () => {
 
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
     expect(prisma.orderCost.create).not.toHaveBeenCalled();
   });
 
@@ -348,7 +360,7 @@ describe('OrdersService.changeStatus — confirming', () => {
       /grams/,
     );
     expect(prisma.order.update).not.toHaveBeenCalled();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('confirms a mold line once all four specs are set', async () => {
@@ -391,6 +403,6 @@ describe('OrdersService.changeStatus — confirming', () => {
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.status).toBe('REJECTED');
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 });

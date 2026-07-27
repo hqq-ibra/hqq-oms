@@ -407,19 +407,16 @@ export class OrdersService {
       });
 
       if (isConfirming) {
+        // A read-then-clamp-then-relative-decrement would race: two
+        // concurrent confirmations touching the same product could both read
+        // the same starting inventory, each clamp against it, and both apply
+        // their own decrement — driving the column negative despite the
+        // clamp, since Postgres never re-checks the value at write time. A
+        // single UPDATE that both reads and clamps server-side has no such
+        // window: the row lock taken for the write serializes concurrent
+        // updates to the same product.
         for (const item of order.items) {
-          const product = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { inventory: true },
-          });
-          if (product && product.inventory > 0) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: {
-                inventory: { decrement: Math.min(item.quantity, product.inventory) },
-              },
-            });
-          }
+          await tx.$executeRaw`UPDATE products SET inventory = GREATEST(inventory - ${item.quantity}, 0) WHERE id = ${item.productId}`;
         }
 
         // Revenue in Reports and Analytics is the SELLING_PRICE cost row
