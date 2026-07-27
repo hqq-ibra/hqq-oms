@@ -80,15 +80,16 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 - Consumes: nothing
 - Produces: `isValidTransition(orderType: string, currentStatus: string, newStatus: string): boolean` — unchanged signature, new rules.
 
-- [ ] **Step 1: Create the branch and record the tsc baseline**
+- [ ] **Step 1: Confirm the baseline**
+
+The branch `feat/order-quotation-stage` already exists and is checked out.
 
 ```bash
-cd "C:/Users/Lenovo/Desktop/Claude App/hqq-oms"
-git checkout -b feat/order-quotation-stage
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
+npm -w apps/api run test 2>&1 | tail -6
 ```
 
-Write down the error count. It should be 6. Every later task compares against this number.
+Expected: **zero** `tsc` output, and 6 suites / 28 tests passing. If either differs, stop and report — something changed underneath this plan.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1392,7 +1393,7 @@ Expected: PASS, 4 tests.
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
 ```
 
-Expected: the same 6 errors you recorded in Task 1, no more.
+Expected: no output at all. Zero errors is the bar.
 
 - [ ] **Step 8: Commit**
 
@@ -2254,7 +2255,7 @@ npm -w apps/api run test
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
 ```
 
-Expected: all tests PASS; tsc still at the Task 1 baseline of 6.
+Expected: all tests PASS; `tsc` silent (zero errors).
 
 - [ ] **Step 6: Commit**
 
@@ -3350,7 +3351,7 @@ npx tsc --noEmit -p apps/web/tsconfig.json 2>&1 | tail -20
 npm run dev
 ```
 
-`tsc` must be back to the Task 1 baseline on both projects. Then walk the whole flow:
+`tsc` must be silent on both projects — zero errors. Then walk the whole flow:
 
 1. `/orders/new` — create a quotation with prices
 2. Land on the quotation page, edit a price, print
