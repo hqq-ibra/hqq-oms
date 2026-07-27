@@ -22,12 +22,18 @@ and Analytics) get entered a second time, or not at all.
    `quotation_form_10.html`, filled from the order's products and prices.
 3. Confirmed quote totals feed `SELLING_PRICE` automatically — price entered once.
 
+3. Quote a new mold per design, with its own specs, several times on one quote.
+
 ## Non-goals
 
 - Multi-currency quotations. SAR only, matching the paper form.
 - Partial confirmation (customer accepts 3 of 5 lines). Out of scope.
 - Emailing or WhatsApping the quotation from the app. Print / Save-PDF only.
 - Wiring up `packages/shared`. See "Known constraints".
+- **Mold promotion** — assigning a drawing number to a completed mold line so it
+  becomes a catalogued Product with its own PDF. Deferred to its own spec; this
+  one only lays the columns it will need, so production takes one migration
+  rather than two. See §9.
 
 ---
 
@@ -405,7 +411,78 @@ between build and restart leaves the old code serving and produces 404s where
 
 ---
 
-## 9. Known constraints
+## 9. New mold lines
+
+A customer asking for new molds asks per **design**, not per catalogue item —
+three new designs is three molds, each with its own capacity, machine, grams and
+pattern. None of those molds exists as a product yet, so there is nothing to
+select from the catalogue.
+
+### The placeholder product
+
+One catalogue entry, **"New Mold — Silicone Thermoforming"**, stands in for any
+mold not yet made. It is marked with a new flag:
+
+```prisma
+  requiresLineSpecs Boolean @default(false) @map("requires_line_specs")
+```
+
+on `Product`. The flag, not a hardcoded SKU, is what the code keys off — so
+another placeholder can be added later without touching code. The migration
+creates the product (SKU `SIL-THF-NEWMOLD`, silicone / thermoforming) with the
+flag set.
+
+### Specs move to the line
+
+`Product.specs` is per-product JSON (`machine`, `capacity`, `grams`, `pattern`)
+and each catalogued SKU is one fixed combination. The placeholder has no fixed
+combination, so `OrderItem` gains its own:
+
+```prisma
+  specs         Json?    // { machine, capacity, grams, pattern } — same keys as Product.specs
+  drawingNumber String?  @map("drawing_number")   // filled by mold promotion, later
+  promotedProductId String? @map("promoted_product_id")  // ditto
+```
+
+`drawingNumber` and `promotedProductId` are unused by this work. They are added
+now purely so the promotion feature needs no second migration against the live
+database.
+
+The dropdown options are the ones already in the New Order wizard —
+`THERMOFORMING_MACHINES`, `THERMOFORMING_CAPACITIES`, `THERMOFORMING_GRAMS`
+(`orders/new/page.tsx:23-45`) — with pattern free text.
+
+### Repeat lines
+
+`OrderItem` currently has `@@unique([orderId, productId])`, which caps the
+placeholder at one line per order. **The constraint is dropped.**
+
+Dropping it does not change how ordinary products behave: `addItem` keeps
+merging quantities for products where `requiresLineSpecs` is false, and only
+creates a genuinely new line for placeholders. So clicking a tray twice still
+reads "qty 2", while adding a mold twice gives two independently specced molds.
+
+### Validation
+
+Specs may be left blank while a quotation is still being priced — you often
+quote before the customer has settled the design. But **confirmation is blocked**
+when any placeholder line is missing any of the four: the factory cannot cut a
+mold without them, and an incomplete confirmed order becomes a phone call. The
+error names the offending line and the missing fields.
+
+### On the printed quotation
+
+A mold line's description renders as the product name followed by its specs, so
+the customer sees what they are being quoted:
+
+```
+New Mold — Silicone Thermoforming
+MultiVac · 6K · 250g · Rose
+```
+
+A line-level `description` override, if set, still wins.
+
+## 10. Known constraints
 
 - **`packages/shared` is unwired.** Nothing in `apps/api` or `apps/web` imports
   `@hqq/shared` and it is not a dependency of either. The flow arrays are

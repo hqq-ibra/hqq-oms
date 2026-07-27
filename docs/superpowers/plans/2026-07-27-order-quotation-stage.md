@@ -16,9 +16,16 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 - **`packages/shared` is dead code.** Nothing imports `@hqq/shared`. The workflow arrays are duplicated in `apps/api/src/orders/order-workflow.ts` and `apps/web/src/lib/types.ts` — **both must be edited together**. Update `packages/shared/src/*` too, for consistency only.
 - **`apps/web` has no test runner.** No jest, no vitest, no `test` script. Web tasks are verified by `npx tsc --noEmit` and by running the app — never write web test files.
 - **API tests:** `npm -w apps/api run test`. Config is `apps/api/jest.config.js` (`rootDir: 'src'`, `testRegex: '.*\.spec\.ts$'`), so specs live under `apps/api/src/**`.
-- **A green build does not prove type safety.** Lint is disabled and `tsc` has a **baseline of 6 pre-existing errors**. Record the baseline before you start (`npx tsc --noEmit -p apps/api/tsconfig.json`) and compare against it — do not chase pre-existing errors.
+- **A green build does not prove type safety** — lint is disabled, so run `tsc` explicitly. Measured on this branch at 2026-07-27, **both projects are at zero errors**:
+  - `npx tsc --noEmit -p apps/api/tsconfig.json` → 0
+  - `npx tsc --noEmit -p apps/web/tsconfig.json` → 0
+
+  Zero is the bar. Any `tsc` error you see is one you introduced.
+- **Baseline test suite:** `npm -w apps/api run test` → 6 suites, 28 tests, all passing. Never finish a task below that count.
 - **Prisma `DateTime`:** always pass real `Date` objects to Prisma writes, never ISO strings.
 - **Currency is SAR only** for quotations.
+- **Mold placeholder:** a product with `requiresLineSpecs = true` carries its specs on the *line*, not the product, and may appear on several lines of one order. Key off that flag — never off the SKU string. The four required spec keys are exactly `machine`, `capacity`, `grams`, `pattern`, matching `Product.specs` (`products.service.ts:45-48`).
+- `OrderItem.drawingNumber` and `OrderItem.promotedProductId` are added by Task 4 but **used by nothing in this plan**. They exist so the mold-promotion feature needs no second migration against the live database. Do not build promotion behaviour here.
 - **Do not deploy** until Task 11. Production is a live business database.
 - Commit after every task. Branch: `feat/order-quotation-stage`.
 
@@ -33,6 +40,7 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 | `apps/api/src/orders/quotation-totals.ts` | Pure arithmetic: line totals, discount clamp, VAT, grand total. Authoritative. |
 | `apps/api/src/orders/quotation-defaults.ts` | Pure: builds the quote header defaults from a customer. |
 | `apps/api/src/orders/sequence.ts` | Pure: next `QT-`/`ORD-`/`FO-` number from the previous one. |
+| `apps/api/src/orders/mold-specs.ts` | Pure: required spec keys, incomplete-line detection, spec label rendering. |
 | `apps/api/src/orders/__tests__/order-workflow.spec.ts` | Transition rules. |
 | `apps/api/src/orders/__tests__/quotation-totals.spec.ts` | Totals arithmetic. |
 | `apps/api/src/orders/__tests__/sequence.spec.ts` | Number sequencing. |
@@ -46,7 +54,7 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 
 | File | Change |
 |---|---|
-| `prisma/schema.prisma` | `Order`, `OrderItem`, new `OrderQuotation` |
+| `prisma/schema.prisma` | `Order`, `OrderItem`, `Product`, new `OrderQuotation` |
 | `apps/api/src/orders/order-workflow.ts` | flows + `REJECTED` |
 | `apps/api/src/orders/orders.service.ts` | create, confirm, quotation get/patch |
 | `apps/api/src/orders/orders.controller.ts` | two new routes |
@@ -443,11 +451,11 @@ git commit -m "feat(orders): add quotation totals calculation"
 
 ---
 
-## Task 3: Number sequencing and quote defaults
+## Task 3: Pure helpers — sequencing, quote defaults, mold specs
 
 **Files:**
-- Create: `apps/api/src/orders/sequence.ts`, `apps/api/src/orders/quotation-defaults.ts`
-- Test: `apps/api/src/orders/__tests__/sequence.spec.ts`
+- Create: `apps/api/src/orders/sequence.ts`, `apps/api/src/orders/quotation-defaults.ts`, `apps/api/src/orders/mold-specs.ts`
+- Test: `apps/api/src/orders/__tests__/sequence.spec.ts`, `apps/api/src/orders/__tests__/mold-specs.spec.ts`
 
 **Interfaces:**
 - Produces:
@@ -455,6 +463,11 @@ git commit -m "feat(orders): add quotation totals calculation"
   - `buildQuotationDefaults(input: QuotationDefaultsInput): QuotationDefaults`
   - `QuotationDefaultsInput = { customerName: string; customerCity: string | null; contactName: string | null; contactPhone: string | null; quoteDate: Date }`
   - `QuotationDefaults = { quoteDate: Date; validUntil: Date; clientBlock: string; contact: string | null; attn: string | null }`
+  - `REQUIRED_SPEC_KEYS: readonly ['machine', 'capacity', 'grams', 'pattern']`
+  - `MoldSpecs = { machine?: string; capacity?: string; grams?: string; pattern?: string }`
+  - `missingSpecKeys(specs: unknown): string[]`
+  - `findIncompleteSpecLines(lines: { index: number; requiresLineSpecs: boolean; specs: unknown }[]): { index: number; missing: string[] }[]`
+  - `formatSpecs(specs: unknown): string`
 
 `orders.service.ts` currently repeats this sequencing logic twice with `.replace(prefix, '')`, which corrupts the result when the prefix characters recur in the suffix. Extracting it fixes that and makes it testable.
 
@@ -628,11 +641,156 @@ npm -w apps/api run test -- sequence
 
 Expected: PASS, 10 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write the failing mold-spec test**
+
+Create `apps/api/src/orders/__tests__/mold-specs.spec.ts`:
+
+```ts
+import {
+  REQUIRED_SPEC_KEYS,
+  missingSpecKeys,
+  findIncompleteSpecLines,
+  formatSpecs,
+} from '../mold-specs';
+
+const full = { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' };
+
+describe('missingSpecKeys', () => {
+  it('returns nothing when all four are present', () => {
+    expect(missingSpecKeys(full)).toEqual([]);
+  });
+
+  it('lists every absent key', () => {
+    expect(missingSpecKeys({ machine: 'MV' }).sort()).toEqual(
+      ['capacity', 'grams', 'pattern'],
+    );
+  });
+
+  it('treats blank and whitespace-only values as missing', () => {
+    expect(missingSpecKeys({ ...full, pattern: '   ' })).toEqual(['pattern']);
+    expect(missingSpecKeys({ ...full, grams: '' })).toEqual(['grams']);
+  });
+
+  it('treats null and non-objects as everything missing', () => {
+    expect(missingSpecKeys(null).sort()).toEqual([...REQUIRED_SPEC_KEYS].sort());
+    expect(missingSpecKeys('nope').sort()).toEqual([...REQUIRED_SPEC_KEYS].sort());
+  });
+});
+
+describe('findIncompleteSpecLines', () => {
+  it('ignores lines that do not require specs', () => {
+    expect(
+      findIncompleteSpecLines([
+        { index: 0, requiresLineSpecs: false, specs: null },
+        { index: 1, requiresLineSpecs: false, specs: { machine: 'MV' } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('reports each incomplete mold line with its index and missing keys', () => {
+    const result = findIncompleteSpecLines([
+      { index: 0, requiresLineSpecs: true, specs: full },
+      { index: 1, requiresLineSpecs: true, specs: { machine: 'MV', capacity: '6K' } },
+      { index: 2, requiresLineSpecs: true, specs: null },
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result[0].index).toBe(1);
+    expect(result[0].missing.sort()).toEqual(['grams', 'pattern']);
+    expect(result[1].index).toBe(2);
+  });
+
+  it('returns nothing when every mold line is complete', () => {
+    expect(
+      findIncompleteSpecLines([{ index: 0, requiresLineSpecs: true, specs: full }]),
+    ).toEqual([]);
+  });
+});
+
+describe('formatSpecs', () => {
+  it('joins the four values in a fixed order', () => {
+    expect(formatSpecs(full)).toBe('MV · 6K · 250 · Rose');
+  });
+
+  it('skips absent values rather than leaving empty separators', () => {
+    expect(formatSpecs({ machine: 'MV', pattern: 'Rose' })).toBe('MV · Rose');
+  });
+
+  it('returns an empty string for no specs', () => {
+    expect(formatSpecs(null)).toBe('');
+    expect(formatSpecs({})).toBe('');
+  });
+});
+```
+
+- [ ] **Step 6: Run it and confirm it fails**
 
 ```bash
-git add apps/api/src/orders/sequence.ts apps/api/src/orders/quotation-defaults.ts apps/api/src/orders/__tests__/sequence.spec.ts
-git commit -m "feat(orders): extract number sequencing and quotation defaults"
+npm -w apps/api run test -- mold-specs
+```
+
+Expected: FAIL — `Cannot find module '../mold-specs'`.
+
+- [ ] **Step 7: Implement the mold-spec helpers**
+
+Create `apps/api/src/orders/mold-specs.ts`:
+
+```ts
+/**
+ * A placeholder product (Product.requiresLineSpecs) carries no fixed spec
+ * combination — each order line names its own mold. Keys match Product.specs
+ * so a promoted mold can copy them straight across later.
+ */
+export const REQUIRED_SPEC_KEYS = [
+  'machine',
+  'capacity',
+  'grams',
+  'pattern',
+] as const;
+
+export type SpecKey = (typeof REQUIRED_SPEC_KEYS)[number];
+
+export type MoldSpecs = Partial<Record<SpecKey, string>>;
+
+function readSpecs(specs: unknown): MoldSpecs {
+  if (!specs || typeof specs !== 'object' || Array.isArray(specs)) return {};
+  return specs as MoldSpecs;
+}
+
+export function missingSpecKeys(specs: unknown): string[] {
+  const s = readSpecs(specs);
+  return REQUIRED_SPEC_KEYS.filter((key) => !s[key] || !String(s[key]).trim());
+}
+
+export function findIncompleteSpecLines(
+  lines: { index: number; requiresLineSpecs: boolean; specs: unknown }[],
+): { index: number; missing: string[] }[] {
+  return lines
+    .filter((line) => line.requiresLineSpecs)
+    .map((line) => ({ index: line.index, missing: missingSpecKeys(line.specs) }))
+    .filter((line) => line.missing.length > 0);
+}
+
+export function formatSpecs(specs: unknown): string {
+  const s = readSpecs(specs);
+  return REQUIRED_SPEC_KEYS.map((key) => s[key])
+    .filter((value): value is string => Boolean(value && String(value).trim()))
+    .join(' · ');
+}
+```
+
+- [ ] **Step 8: Run the test again**
+
+```bash
+npm -w apps/api run test -- mold-specs
+```
+
+Expected: PASS, 10 tests.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add apps/api/src/orders/sequence.ts apps/api/src/orders/quotation-defaults.ts apps/api/src/orders/mold-specs.ts apps/api/src/orders/__tests__/sequence.spec.ts apps/api/src/orders/__tests__/mold-specs.spec.ts
+git commit -m "feat(orders): pure helpers for sequencing, quote defaults and mold specs"
 ```
 
 ---
@@ -644,7 +802,7 @@ git commit -m "feat(orders): extract number sequencing and quotation defaults"
 - Create: `prisma/migrations/<generated>_order_quotation_stage/migration.sql`
 
 **Interfaces:**
-- Produces: Prisma client types `Order.quoteNumber`, `Order.confirmedAt`, `Order.quotation`, `OrderItem.unitPrice | unitLabel | description | orderIndex`, `OrderQuotation`. Tasks 5–7 depend on these field names.
+- Produces: Prisma client types `Order.quoteNumber`, `Order.confirmedAt`, `Order.quotation`, `OrderItem.unitPrice | unitLabel | description | orderIndex | specs | drawingNumber | promotedProductId`, `Product.requiresLineSpecs`, `OrderQuotation`, and the seeded product `SIL-THF-NEWMOLD`. Tasks 5–11 depend on these names.
 
 **This task runs against your local dev database only.** Production is Task 11.
 
@@ -689,15 +847,39 @@ model OrderItem {
   unitLabel   String   @default("عدد") @map("unit_label")
   description String?
   orderIndex  Int      @default(0) @map("order_index")
+  specs       Json?
+  drawingNumber     String? @map("drawing_number")
+  promotedProductId String? @map("promoted_product_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
-  @@unique([orderId, productId])
+  @@index([orderId])
   @@map("order_items")
 }
 ```
+
+`@@unique([orderId, productId])` is **removed**: the mold placeholder appears once
+per design, so one order holds several lines of the same product. It is replaced
+by a plain index on `orderId`, which is what the queries actually need. Ordinary
+products still merge by quantity — that is enforced in `addItem` (Task 11), not by
+the database.
+
+`specs` holds `{ machine, capacity, grams, pattern }`. `drawingNumber` and
+`promotedProductId` are for the later mold-promotion feature and are written by
+nothing in this plan; they are here so production takes one migration, not two.
+
+- [ ] **Step 2b: Add the placeholder flag to `Product`**
+
+In the `Product` model, after the `inventory` line, add:
+
+```prisma
+  requiresLineSpecs Boolean  @default(false) @map("requires_line_specs")
+```
+
+A product with this flag carries its specs per order line rather than on the
+product. All code keys off this flag, never off the SKU.
 
 - [ ] **Step 3: Add the `OrderQuotation` model**
 
@@ -762,6 +944,51 @@ ALTER TABLE "orders" ALTER COLUMN "factory_order_number" DROP NOT NULL;
 ```
 
 Dropping those columns would destroy every existing order number.
+
+- [ ] **Step 6b: Create the mold placeholder product in the migration**
+
+Append to the same `migration.sql`. The product must exist before anyone can quote
+a mold, and seeding it here means dev and production get it identically.
+
+```sql
+-- The one catalogue entry standing in for a mold that does not exist yet.
+-- Its specs live on each order line, not here.
+INSERT INTO "products" (
+  "id", "sku", "name_en", "name_ar", "category_id", "subcategory_id",
+  "inventory", "is_active", "requires_line_specs", "created_at", "updated_at"
+)
+SELECT
+  'prod_new_mold_thf',
+  'SIL-THF-NEWMOLD',
+  'New Mold — Silicone Thermoforming',
+  'قالب جديد — سيليكون ثيرموفورمنج',
+  c."id",
+  s."id",
+  0, true, true, NOW(), NOW()
+FROM "product_categories" c
+LEFT JOIN "product_subcategories" s
+  ON s."category_id" = c."id" AND s."sku_code" = 'THF'
+WHERE c."sku_prefix" = 'SIL'
+LIMIT 1
+ON CONFLICT ("sku") DO NOTHING;
+```
+
+The column names above are verified against `prisma/schema.prisma:171-196`:
+`product_categories.sku_prefix`, `product_subcategories.sku_code`,
+`product_subcategories.category_id`. The dev database has category `cat_sil`
+(`skuPrefix: 'SIL'`) with subcategory `sub_sil_thf` (`skuCode: 'THF'`).
+
+The statement selects the category by `sku_prefix` rather than hardcoding
+`cat_sil`, because production may have different generated IDs. After applying,
+verify a row came back:
+
+```bash
+node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.product.findUnique({where:{sku:'SIL-THF-NEWMOLD'}}).then(r=>{console.log(r);return p.\$disconnect()})"
+```
+
+Expected: a product with `requiresLineSpecs: true` and a non-null `categoryId`.
+If it prints `null`, the silicone category is missing — create it through the
+Products UI, then re-run the INSERT.
 
 - [ ] **Step 7: Apply it locally and verify**
 
@@ -929,6 +1156,36 @@ describe('OrdersService.create', () => {
     expect(line.orderIndex).toBe(0);
   });
 
+  it('stores per-line mold specs and allows the same product on several lines', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    prisma.order.create.mockImplementation(({ data }: { data: any }) =>
+      Promise.resolve({ id: 'o1', ...data }),
+    );
+    const { service } = createService(prisma);
+
+    await service.create(
+      {
+        orderType: 'NEW_MOLD',
+        customerId: 'c1',
+        items: [
+          { productId: 'mold', quantity: 1, unitPrice: 900, specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' } },
+          { productId: 'mold', quantity: 1, unitPrice: 950, specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' } },
+        ],
+      },
+      'u1',
+    );
+
+    const lines = (prisma.order.create as Mock).mock.calls[0][0].data.items.create;
+    expect(lines).toHaveLength(2);
+    expect(lines[0].specs).toEqual({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' });
+    expect(lines[1].specs.pattern).toBe('Star');
+    expect(lines[0].orderIndex).toBe(0);
+    expect(lines[1].orderIndex).toBe(1);
+  });
+
   it('seeds the quotation header from the customer', async () => {
     const prisma = createPrismaMock();
     prisma.customer.findUnique.mockResolvedValue({
@@ -1024,6 +1281,7 @@ Replace the whole `create` method (lines 153–226) with:
         unitPrice?: number;
         unitLabel?: string;
         description?: string;
+        specs?: Record<string, string> | null;
       }[];
       expectedDeliveryDate?: string;
       assignedUserId?: string | null;
@@ -1072,6 +1330,7 @@ Replace the whole `create` method (lines 153–226) with:
             ...(item.unitLabel ? { unitLabel: item.unitLabel } : {}),
             description: item.description ?? null,
             orderIndex: index,
+            ...(item.specs ? { specs: item.specs } : {}),
           })),
         },
         quotation: {
@@ -1151,8 +1410,14 @@ git commit -m "feat(orders): create orders as unconfirmed quotations"
 - Test: `apps/api/src/orders/__tests__/orders.service.spec.ts` (append)
 
 **Interfaces:**
-- Consumes: `computeQuotationTotals` (Task 2), `nextSequenceNumber` (Task 3)
-- Produces: `changeStatus` unchanged signature; on `CONFIRMED` it assigns numbers, sets `confirmedAt`, decrements stock and upserts the `SELLING_PRICE` cost.
+- Consumes: `computeQuotationTotals` (Task 2), `nextSequenceNumber` and `findIncompleteSpecLines` (Task 3)
+- Produces: `changeStatus` unchanged signature; on `CONFIRMED` it validates mold specs, assigns numbers, sets `confirmedAt`, decrements stock and upserts the `SELLING_PRICE` cost.
+
+Add `findIncompleteSpecLines` to the imports at the top of `orders.service.ts`:
+
+```ts
+import { findIncompleteSpecLines } from './mold-specs';
+```
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1169,7 +1434,14 @@ function quotationOrder(overrides: Record<string, unknown> = {}) {
     factoryOrderNumber: null,
     customer: { id: 'c1', customerCode: 'ACME', name: 'Acme' },
     items: [
-      { id: 'i1', productId: 'p1', quantity: 2, unitPrice: 100 },
+      {
+        id: 'i1',
+        productId: 'p1',
+        quantity: 2,
+        unitPrice: 100,
+        specs: null,
+        product: { nameEn: 'Tray 500g', requiresLineSpecs: false },
+      },
     ],
     quotation: {
       discountAmount: 0,
@@ -1179,6 +1451,15 @@ function quotationOrder(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+const moldLine = (specs: unknown, id = 'm1') => ({
+  id,
+  productId: 'mold',
+  quantity: 1,
+  unitPrice: 900,
+  specs,
+  product: { nameEn: 'New Mold — Silicone Thermoforming', requiresLineSpecs: true },
+});
 
 describe('OrdersService.changeStatus — confirming', () => {
   function setup(order = quotationOrder()) {
@@ -1276,6 +1557,50 @@ describe('OrdersService.changeStatus — confirming', () => {
     expect(prisma.orderCost.create).not.toHaveBeenCalled();
   });
 
+  it('refuses to confirm a mold line that is missing specs', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine({ machine: 'MV', capacity: '6K' })] }),
+    );
+
+    await expect(service.changeStatus('o1', 'CONFIRMED', 'u1')).rejects.toThrow(
+      /grams/,
+    );
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it('confirms a mold line once all four specs are set', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({
+        items: [moldLine({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' })],
+      }),
+    );
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.orderNumber).toMatch(
+      /^ORD-\d{4}-0001$/,
+    );
+  });
+
+  it('does not demand specs from ordinary products', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.order.update).toHaveBeenCalled();
+  });
+
+  it('lets an incomplete mold quotation still be rejected', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine(null)] }),
+    );
+
+    await service.changeStatus('o1', 'REJECTED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.status).toBe('REJECTED');
+  });
+
   it('rejects a quotation without assigning anything', async () => {
     const { prisma, service } = setup();
 
@@ -1315,7 +1640,12 @@ Replace the whole `changeStatus` method with:
         product: true,
         factory: true,
         assignedUser: true,
-        items: true,
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            product: { select: { nameEn: true, requiresLineSpecs: true } },
+          },
+        },
         quotation: true,
       },
     });
@@ -1328,6 +1658,26 @@ Replace the whole `changeStatus` method with:
     }
 
     const isConfirming = newStatus === 'CONFIRMED';
+
+    // A mold cannot be cut without all four specs. Quotations may be saved
+    // incomplete while pricing; confirmation is where it has to be complete.
+    if (isConfirming) {
+      const incomplete = findIncompleteSpecLines(
+        order.items.map((item, index) => ({
+          index,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: item.specs,
+        })),
+      );
+      if (incomplete.length > 0) {
+        const detail = incomplete
+          .map((l) => `line ${l.index + 1} (missing ${l.missing.join(', ')})`)
+          .join('; ');
+        throw new BadRequestException(
+          `Cannot confirm: mold specifications are incomplete — ${detail}`,
+        );
+      }
+    }
 
     // Everything a quotation deliberately deferred happens here, and only here.
     const confirmationData: Record<string, unknown> = {};
@@ -1471,7 +1821,10 @@ git commit -m "feat(orders): confirmation assigns numbers, moves stock, records 
 - Produces:
   - `GET /api/v1/orders/:id/quotation` → `QuotationView`
   - `PATCH /api/v1/orders/:id/quotation` → `QuotationView`
-  - `QuotationView = { orderId, quoteNumber, orderNumber, status, quoteDate, validUntil, payMethod, clientBlock, contact, attn, notes, discountAmount, vatEnabled, vatPercent, language, customerName, lines: { id, description, quantity, unitLabel, unitPrice, lineTotal }[], totals: QuotationTotals }`
+  - `QuotationView = { orderId, quoteNumber, orderNumber, status, quoteDate, validUntil, payMethod, clientBlock, contact, attn, notes, discountAmount, vatEnabled, vatPercent, language, customerName, lines: QuotationLine[], totals: QuotationTotals }`
+  - `QuotationLine = { id, description, productName, requiresLineSpecs, specs: Record<string,string> | null, quantity, unitLabel, unitPrice, lineTotal }`
+
+Add `formatSpecs` to the `./mold-specs` import in `orders.service.ts`.
 
 Task 10's page consumes this exact shape.
 
@@ -1490,7 +1843,7 @@ describe('OrdersService quotation endpoints', () => {
     status: 'QUOTATION',
     customer: { name: 'Acme Dates' },
     items: [
-      { id: 'i1', quantity: 2, unitPrice: 100, unitLabel: 'عدد', description: null, orderIndex: 0, product: { nameEn: 'Tray 500g', nameAr: null } },
+      { id: 'i1', quantity: 2, unitPrice: 100, unitLabel: 'عدد', description: null, orderIndex: 0, specs: null, product: { nameEn: 'Tray 500g', nameAr: null, requiresLineSpecs: false } },
     ],
     quotation: {
       quoteDate: new Date('2026-07-27'),
@@ -1527,6 +1880,69 @@ describe('OrdersService quotation endpoints', () => {
     const view = await service.getQuotation('o1');
 
     expect(view.lines[0].description).toBe('Tray 500g');
+  });
+
+  it('appends the specs to a mold line description', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: null, orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    const view = await service.getQuotation('o1');
+
+    expect(view.lines[0].description).toBe(
+      'New Mold — Silicone Thermoforming\nMV · 6K · 250 · Rose',
+    );
+    expect(view.lines[0].requiresLineSpecs).toBe(true);
+    expect(view.lines[0].specs).toEqual({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' });
+  });
+
+  it('lets an explicit description override the spec label', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: 'Ramadan crescent mold', orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    expect((await service.getQuotation('o1')).lines[0].description).toBe(
+      'Ramadan crescent mold',
+    );
+  });
+
+  it('saves per-line spec edits', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [{ id: 'i1', specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' } }],
+    });
+
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'i1' },
+        data: expect.objectContaining({
+          specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' },
+        }),
+      }),
+    );
   });
 
   it('refuses to edit a quotation once the order is confirmed', async () => {
@@ -1632,14 +2048,24 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
       vatPercent,
       language: q?.language ?? 'ar',
       customerName: order.customer.name,
-      lines: order.items.map((item, index) => ({
-        id: item.id,
-        description: item.description ?? item.product.nameEn,
-        quantity: item.quantity,
-        unitLabel: item.unitLabel,
-        unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
-        lineTotal: totals.lineTotals[index],
-      })),
+      lines: order.items.map((item, index) => {
+        const specLabel = formatSpecs(item.specs);
+        return {
+          id: item.id,
+          // An explicit override wins; otherwise a mold line shows its specs
+          // under the product name so the customer sees what is being quoted.
+          description:
+            item.description ??
+            (specLabel ? `${item.product.nameEn}\n${specLabel}` : item.product.nameEn),
+          productName: item.product.nameEn,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: (item.specs ?? null) as Record<string, string> | null,
+          quantity: item.quantity,
+          unitLabel: item.unitLabel,
+          unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
+          lineTotal: totals.lineTotals[index],
+        };
+      }),
       totals,
     };
   }
@@ -1664,6 +2090,7 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
         unitPrice?: number | null;
         unitLabel?: string;
         description?: string | null;
+        specs?: Record<string, string> | null;
       }[];
     }>,
   ) {
@@ -1707,6 +2134,89 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
     this.wsGateway.emit('order.updated', { orderId: id });
     return this.getQuotation(id);
   }
+```
+
+- [ ] **Step 3b: Stop merging quantities for placeholder products**
+
+`addItem` (`orders.service.ts:371`) merges by `productId`, which would fold a
+second mold into the first line's quantity — losing the second design. The DB
+constraint that forced merging is gone (Task 4), so it becomes conditional.
+Task 10's "add line" button calls this endpoint, so it must be right before then.
+
+Replace the opening of `addItem` — the `existing` lookup and everything up to its
+`if (existing)` — with:
+
+```ts
+  async addItem(orderId: string, dto: { productId: string; quantity: number }, userId: string) {
+    const order = await this.getById(orderId);
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { requiresLineSpecs: true },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    // A placeholder is a new design every time; ordinary products merge.
+    const existing = product.requiresLineSpecs
+      ? null
+      : await this.prisma.orderItem.findFirst({
+          where: { orderId, productId: dto.productId },
+        });
+
+    if (existing) {
+```
+
+The update branch and the `customerProduct` upsert are unchanged. In the create
+branch, give the new line a trailing `orderIndex` so it prints last rather than
+tying at position 0:
+
+```ts
+    const lineCount = await this.prisma.orderItem.count({ where: { orderId } });
+    const item = await this.prisma.orderItem.create({
+      data: {
+        orderId,
+        productId: dto.productId,
+        quantity: dto.quantity,
+        orderIndex: lineCount,
+      },
+      include: { product: { include: { factory: true } } },
+    });
+```
+
+Add the covering test to `orders.service.spec.ts`:
+
+```ts
+describe('OrdersService.addItem', () => {
+  function setupAdd(requiresLineSpecs: boolean) {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      id: 'o1', customerId: 'c1', status: 'QUOTATION', items: [], costs: [], statusHistory: [],
+    });
+    prisma.product.findUnique.mockResolvedValue({ requiresLineSpecs });
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', quantity: 1 });
+    prisma.orderItem.count = jest.fn().mockResolvedValue(2);
+    prisma.orderItem.create.mockResolvedValue({ id: 'i2' });
+    prisma.orderItem.update.mockResolvedValue({ id: 'i1', quantity: 2 });
+    return { prisma, ...createService(prisma) };
+  }
+
+  it('merges an ordinary product into the existing line', async () => {
+    const { prisma, service } = setupAdd(false);
+    await service.addItem('o1', { productId: 'p1', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).toHaveBeenCalled();
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+  });
+
+  it('always starts a new line for a placeholder product', async () => {
+    const { prisma, service } = setupAdd(true);
+    await service.addItem('o1', { productId: 'mold', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(prisma.orderItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productId: 'mold', orderIndex: 2 }),
+      }),
+    );
+  });
+});
 ```
 
 - [ ] **Step 4: Add the controller routes**
@@ -1855,41 +2365,109 @@ Create `apps/web/src/lib/quotation-totals.ts` as a **byte-for-byte copy** of `ap
 In `apps/web/src/app/(dashboard)/orders/new/page.tsx`, replace the `OrderItem` interface (lines 112–115) with:
 
 ```ts
-interface OrderItem {
+interface OrderLine {
+  lineId: string;
   productId: string;
+  productName: string;
+  requiresLineSpecs: boolean;
   quantity: number;
   unitPrice: number | null;
   unitLabel: string;
   description: string;
+  specs: Record<string, string>;
 }
 ```
 
-In `addItem` (line 259), replace the `return [...prev, { productId: product.id, quantity: 1 }];` line with:
+Lines are keyed by their own `lineId`, not by `productId`: the mold placeholder
+appears once per design, so one product can occupy several lines.
+
+Add `requiresLineSpecs: boolean;` to the `Product` interface (line 86) — the
+products endpoint already returns every product column.
+
+- [ ] **Step 3: Rework the add/update/remove helpers**
+
+Replace `addItem`, `updateQuantity`, `removeItem` and `getQuantity` (lines 259–290) with:
 
 ```ts
+  const addItem = (product: Product) => {
+    setItemsError('');
+    setOrderItems((prev) => {
+      // Ordinary products merge into one line; a mold is a new design each time.
+      if (!product.requiresLineSpecs) {
+        const existing = prev.find((i) => i.productId === product.id);
+        if (existing) {
+          return prev.map((i) =>
+            i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i,
+          );
+        }
+      }
       return [
         ...prev,
         {
+          lineId: crypto.randomUUID(),
           productId: product.id,
+          productName: product.nameEn,
+          requiresLineSpecs: product.requiresLineSpecs,
           quantity: 1,
           unitPrice: null,
           unitLabel: 'عدد',
           description: product.nameEn,
+          specs: {},
         },
       ];
-```
+    });
+  };
 
-- [ ] **Step 3: Add a line-edit helper**
-
-Immediately after `removeItem` (line 284), add:
-
-```ts
-  const updateLine = (productId: string, patch: Partial<OrderItem>) => {
+  const updateLine = (lineId: string, patch: Partial<OrderLine>) => {
     setOrderItems((prev) =>
-      prev.map((i) => (i.productId === productId ? { ...i, ...patch } : i)),
+      prev.map((i) => (i.lineId === lineId ? { ...i, ...patch } : i)),
     );
   };
+
+  const updateSpec = (lineId: string, key: string, value: string) => {
+    setOrderItems((prev) =>
+      prev.map((i) =>
+        i.lineId === lineId ? { ...i, specs: { ...i.specs, [key]: value } } : i,
+      ),
+    );
+  };
+
+  const updateQuantity = (productId: string, delta: number) => {
+    setOrderItems((prev) =>
+      prev
+        .map((i) =>
+          i.productId === productId && !i.requiresLineSpecs
+            ? { ...i, quantity: Math.max(0, i.quantity + delta) }
+            : i,
+        )
+        .filter((i) => i.quantity > 0),
+    );
+  };
+
+  const removeItem = (productId: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.productId !== productId));
+  };
+
+  const removeLine = (lineId: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.lineId !== lineId));
+  };
+
+  /** Total quantity of a product across its lines — drives the grid badge. */
+  const getQuantity = (productId: string) =>
+    orderItems
+      .filter((i) => i.productId === productId)
+      .reduce((sum, i) => sum + i.quantity, 0);
 ```
+
+The product grid's `+`/`−` buttons and its `X` still key off `productId`, so their
+JSX needs no change. For the mold placeholder the `−` is a no-op by design — mold
+lines are removed individually in step 2, where you can see which design is which.
+Change the grid's `onClick={() => !isSelected && addItem(product)}` (lines 562 and
+665) to `onClick={() => (product.requiresLineSpecs || !isSelected) && addItem(product)}`
+so clicking the mold card repeatedly adds a line each time.
+
+Also change the `orderItems.length` summary bar (line 407) to keep reading
+`orderItems.length` — with lines it now counts lines, which is what you want.
 
 - [ ] **Step 4: Add the quote state**
 
@@ -1951,21 +2529,69 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
               </thead>
               <tbody>
                 {orderItems.map((item, index) => (
-                  <tr key={item.productId} className="border-b border-gray-100">
+                  <tr key={item.lineId} className="border-b border-gray-100 align-top">
                     <td className="px-3 py-2">
                       <input
                         type="text"
                         value={item.description}
-                        onChange={(e) => updateLine(item.productId, { description: e.target.value })}
+                        onChange={(e) => updateLine(item.lineId, { description: e.target.value })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 focus:border-[#DC2626] focus:outline-none"
                       />
+                      {item.requiresLineSpecs && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <select
+                            value={item.specs.machine ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'machine', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Machine…</option>
+                            {THERMOFORMING_MACHINES.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.capacity ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'capacity', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Capacity…</option>
+                            {THERMOFORMING_CAPACITIES.map((c) => (
+                              <option key={c.value} value={c.value}>{c.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.grams ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'grams', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Grams…</option>
+                            {THERMOFORMING_GRAMS.map((g) => (
+                              <option key={g.value} value={g.value}>{g.label}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={item.specs.pattern ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'pattern', e.target.value)}
+                            placeholder="Pattern"
+                            className="w-28 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeLine(item.lineId)}
+                            className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <input
                         type="number"
                         min={1}
                         value={item.quantity}
-                        onChange={(e) => updateLine(item.productId, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+                        onChange={(e) => updateLine(item.lineId, { quantity: Math.max(1, Number(e.target.value) || 1) })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -1973,7 +2599,7 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
                       <input
                         type="text"
                         value={item.unitLabel}
-                        onChange={(e) => updateLine(item.productId, { unitLabel: e.target.value })}
+                        onChange={(e) => updateLine(item.lineId, { unitLabel: e.target.value })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -1983,7 +2609,7 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
                         min={0}
                         step="0.01"
                         value={item.unitPrice ?? ''}
-                        onChange={(e) => updateLine(item.productId, { unitPrice: e.target.value === '' ? null : Number(e.target.value) })}
+                        onChange={(e) => updateLine(item.lineId, { unitPrice: e.target.value === '' ? null : Number(e.target.value) })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -2114,6 +2740,29 @@ The delivery date, assignee and internal notes fields moved out of step 2. Inser
 
 Then change the `usersData` query's `enabled: step === 2` (line 220) to `enabled: step === 3`, and delete the now-unused `onStep2Submit` function (lines 318–320).
 
+The step-3 Summary card still renders items via `getProductById(item.productId)`
+(lines 795–812), which shows the same product twice for two mold lines and breaks
+once a line's product is not in the current search page. Replace that `.map` body
+so it reads from the line itself:
+
+```tsx
+                    {orderItems.map((item) => (
+                      <div
+                        key={item.lineId}
+                        className="flex flex-col items-center rounded-lg border border-gray-200 bg-gray-50 p-3 min-w-[100px]"
+                      >
+                        <span className="text-sm font-medium text-gray-900 text-center">
+                          {item.description}
+                        </span>
+                        <span className="mt-1 inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[#DC2626] px-2 text-xs font-bold text-white">
+                          {item.quantity}
+                        </span>
+                      </div>
+                    ))}
+```
+
+`getProductById` is then unused — delete it (lines 292–294).
+
 - [ ] **Step 7: Send the new fields on submit**
 
 Replace the `handleSubmit` function (lines 322–338) with:
@@ -2131,6 +2780,7 @@ Replace the `handleSubmit` function (lines 322–338) with:
         unitPrice: i.unitPrice,
         unitLabel: i.unitLabel,
         description: i.description,
+        specs: i.requiresLineSpecs ? i.specs : null,
       })),
       expectedDeliveryDate: s2.expectedDeliveryDate
         ? new Date(s2.expectedDeliveryDate).toISOString()
@@ -2214,6 +2864,13 @@ npm run dev
 
 Open http://localhost:3001/orders/new, pick a customer, add two products, enter prices, and submit. Expect a 404 on `/orders/<id>/quotation` — that page is Task 10. Confirm in Prisma Studio that the order has `status = QUOTATION`, a `QT-` number, null `order_number`, prices on both `order_items`, and an `order_quotations` row.
 
+Then run it again exercising the mold: search for `SIL-THF-NEWMOLD`, click it
+**three** times, and confirm step 2 shows three separate lines each with its own
+machine / capacity / grams / pattern controls. Give each different specs, price
+them, submit, and check in Prisma Studio that three `order_items` rows exist for
+the same `product_id` with different `specs` JSON. Clicking an ordinary product
+three times must still produce one line at quantity 3.
+
 - [ ] **Step 11: Commit**
 
 ```bash
@@ -2291,6 +2948,9 @@ import { QUOTATION_CSS } from './quotation-css';
 interface QuotationLine {
   id: string;
   description: string;
+  productName: string;
+  requiresLineSpecs: boolean;
+  specs: Record<string, string> | null;
   quantity: number;
   unitLabel: string;
   unitPrice: number | null;
@@ -2341,6 +3001,25 @@ Then, in the component:
 - Omit the `<th class="col-img">` header and every `td.img-cell` cell. The items table columns are `#`, البيان, الكمية, الوحدة, السعر, الإجمالي.
 - Copy the `I18N` object from the source (lines 494–613) into the page, minus the `thImg`, `imgLabel` and `pasteHint` keys. Drive labels off `I18N[lang]`, with `lang` in `useState<'ar' | 'en'>` seeded from `draft.language` and persisted through the same PATCH.
 - Hide the discount rows when `totals.discount === 0`, exactly as `calcAll()` does.
+- The description cell renders `line.description` with `white-space: pre-line` so
+  a mold line's spec label appears on its own second line, as the API composed it.
+- **Mold spec editors.** When `!locked && line.requiresLineSpecs`, render the four
+  controls under the description cell — machine, capacity and grams as `<select>`,
+  pattern as free text — patching through the same debounced save:
+
+  ```tsx
+  const setSpec = (line: QuotationLine, key: string, value: string) =>
+    save({ lines: [{ id: line.id, specs: { ...(line.specs ?? {}), [key]: value } }] });
+  ```
+
+  Copy the option lists — `THERMOFORMING_MACHINES`, `THERMOFORMING_CAPACITIES`,
+  `THERMOFORMING_GRAMS` — from `orders/new/page.tsx:23-45`. Wrap the controls in a
+  container with `className="qform-specs"` and add `.qform .qform-specs { display: none; }`
+  inside the stylesheet's `@media print` block: the customer's copy shows the
+  composed spec label, not dropdowns.
+- Show an inline warning above the table when any mold line is missing specs —
+  `Missing mold specifications — this quotation cannot be confirmed until they are set.`
+  It mirrors the API's confirmation check so the block is not a surprise later.
 - Inject the stylesheet once: `<style dangerouslySetInnerHTML={{ __html: QUOTATION_CSS }} />`.
 
 Print handler:
@@ -2680,6 +3359,9 @@ npm run dev
 5. Confirm it now has an `ORD-` and `FO-` number, the quotation page is read-only, product inventory dropped, and a `SELLING_PRICE` cost equal to the grand total appears under Costs
 6. Create a second quotation and mark it rejected — it leaves the Quotations tab
 7. The dashboard's recent-orders list shows the `QT-` number for quotations
+8. Quote three molds with different specs; each prints its own spec line
+9. Clear one mold's grams and try to confirm — it is refused, naming that line
+10. Set the grams and confirm — it succeeds
 
 - [ ] **Step 9: Commit**
 
