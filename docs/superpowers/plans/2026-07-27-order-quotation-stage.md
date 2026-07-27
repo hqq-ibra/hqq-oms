@@ -1187,6 +1187,30 @@ describe('OrdersService.create', () => {
     expect(lines[1].orderIndex).toBe(1);
   });
 
+  it('refuses a non-positive quantity or a negative price', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    const { service } = createService(prisma);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 0, unitPrice: 5 }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/at least 1/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 1, unitPrice: -5 }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/negative/i);
+
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
   it('seeds the quotation header from the customer', async () => {
     const prisma = createPrismaMock();
     prisma.customer.findUnique.mockResolvedValue({
@@ -1292,6 +1316,18 @@ Replace the whole `create` method (lines 153–226) with:
   ) {
     if (!dto.items?.length) {
       throw new BadRequestException('At least one item is required');
+    }
+
+    // Money guard: computeQuotationTotals multiplies these straight through, so
+    // a negative slipping in would print a negative line on a customer quotation
+    // and be written to the order's selling price.
+    for (const item of dto.items) {
+      if (!Number.isFinite(item.quantity) || item.quantity < 1) {
+        throw new BadRequestException('Quantity must be at least 1');
+      }
+      if (item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice < 0) {
+        throw new BadRequestException('Unit price cannot be negative');
+      }
     }
 
     const customer = await this.prisma.customer.findUnique({
@@ -1927,6 +1963,27 @@ describe('OrdersService quotation endpoints', () => {
     );
   });
 
+  it('refuses a quantity below one', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', quantity: 0 }] }),
+    ).rejects.toThrow(/at least 1/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a negative unit price', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: -5 }] }),
+    ).rejects.toThrow(/negative/i);
+  });
+
   it('saves per-line spec edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
@@ -2126,6 +2183,21 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
     for (const line of lines ?? []) {
       const { id: lineId, ...lineData } = line;
       if (Object.keys(lineData).length === 0) continue;
+
+      // Same money guard as create(): these feed computeQuotationTotals directly.
+      if (lineData.quantity !== undefined) {
+        if (!Number.isFinite(lineData.quantity) || lineData.quantity < 1) {
+          throw new BadRequestException('Quantity must be at least 1');
+        }
+      }
+      if (
+        lineData.unitPrice !== undefined &&
+        lineData.unitPrice !== null &&
+        lineData.unitPrice < 0
+      ) {
+        throw new BadRequestException('Unit price cannot be negative');
+      }
+
       await this.prisma.orderItem.update({
         where: { id: lineId },
         data: lineData,
