@@ -516,7 +516,10 @@ export default function OrderDetailPage() {
             <Button
               variant="secondary"
               size="md"
-              onClick={() => statusMutation.mutate({ newStatus: 'REJECTED' })}
+              onClick={() => {
+                setSelectedStatusForChange('REJECTED');
+                setStatusModalOpen(true);
+              }}
             >
               Mark rejected
             </Button>

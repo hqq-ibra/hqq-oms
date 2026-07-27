@@ -59,6 +59,7 @@ export class OrdersService {
       where.OR = [
         { orderNumber: { contains: term, mode: 'insensitive' } },
         { factoryOrderNumber: { contains: term, mode: 'insensitive' } },
+        { quoteNumber: { contains: term, mode: 'insensitive' } },
         { customer: { name: { contains: term, mode: 'insensitive' } } },
       ];
     }

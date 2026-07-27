@@ -9,6 +9,8 @@ function createPrismaMock() {
     order: {
       findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -748,6 +750,49 @@ describe('OrdersService.addItem', () => {
       expect.objectContaining({
         data: expect.objectContaining({ productId: 'mold', orderIndex: 2 }),
       }),
+    );
+  });
+});
+
+describe('OrdersService.list', () => {
+  it('sorts oldest-first for the chase view, newest-first otherwise', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ sort: 'oldest' });
+    expect((prisma.order.findMany as Mock).mock.calls[0][0].orderBy).toEqual({
+      createdAt: 'asc',
+    });
+
+    await service.list({});
+    expect((prisma.order.findMany as Mock).mock.calls[1][0].orderBy).toEqual({
+      createdAt: 'desc',
+    });
+  });
+
+  it('includes the quotation relation so the chase list can show valid-until', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({});
+
+    expect((prisma.order.findMany as Mock).mock.calls[0][0].include).toEqual(
+      expect.objectContaining({
+        quotation: { select: { validUntil: true } },
+      }),
+    );
+  });
+
+  it('lets a search term match a quotation by its QT- number, since that is the only identifier it has', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ search: 'QT-2026' });
+
+    expect((prisma.order.findMany as Mock).mock.calls[0][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { quoteNumber: { contains: 'QT-2026', mode: 'insensitive' } },
+      ]),
     );
   });
 });
