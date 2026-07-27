@@ -2026,7 +2026,11 @@ describe('OrdersService quotation endpoints', () => {
 
     await expect(
       service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: -5 }] }),
-    ).rejects.toThrow(/negative/i);
+    ).rejects.toThrow(/non-negative/i);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: NaN }] }),
+    ).rejects.toThrow(/non-negative/i);
   });
 
   it('saves per-line spec edits', async () => {
@@ -2235,12 +2239,13 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
           throw new BadRequestException('Quantity must be at least 1');
         }
       }
-      if (
-        lineData.unitPrice !== undefined &&
-        lineData.unitPrice !== null &&
-        lineData.unitPrice < 0
-      ) {
-        throw new BadRequestException('Unit price cannot be negative');
+      if (lineData.unitPrice !== undefined && lineData.unitPrice !== null) {
+        // Number.isFinite, not just `< 0`: the controller casts the raw body
+        // with no class-validator DTO, so NaN and Infinity can reach here and
+        // would poison every downstream total.
+        if (!Number.isFinite(lineData.unitPrice) || lineData.unitPrice < 0) {
+          throw new BadRequestException('Unit price must be a non-negative number');
+        }
       }
 
       await this.prisma.orderItem.update({
