@@ -230,7 +230,7 @@ export default function QuotationPage() {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['quotation', id],
     queryFn: () => api.get<QuotationView>(`/api/v1/orders/${id}/quotation`),
     enabled: !!id,
@@ -241,6 +241,12 @@ export default function QuotationPage() {
   const printRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<QuotationPatch>({});
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True from the moment an edit is queued until its round trip settles
+  // (covers both the debounce window and the in-flight request). The money
+  // display reads the server's authoritative draft.totals / line.lineTotal
+  // whenever this is false, and only overlays the local, instant recompute
+  // while it is true — see displayTotals below.
+  const [hasUnsavedEdit, setHasUnsavedEdit] = useState(false);
 
   // Seed (and reseed) the local draft whenever the server data changes.
   // `totals` always comes along with it — we never locally patch that field,
@@ -281,8 +287,18 @@ export default function QuotationPage() {
   // patches are merged (not simply replaced) so two fields edited within the
   // same window are both flushed, instead of the later call silently
   // clobbering the earlier one.
+  //
+  // Known accepted tradeoff (ledgered, not engineered around): if two save
+  // cycles overlap — a second edit's debounce elapses and dispatches while an
+  // earlier request is still in flight — and their responses settle out of
+  // order, the client can briefly display a slightly stale totals/lines
+  // snapshot. This cannot corrupt persisted data: updateQuotation applies
+  // per-field partial Prisma updates, so out-of-order responses only affect
+  // transient client display, and the next successful round trip (or reload)
+  // self-heals it.
   const save = (patch: QuotationPatch) => {
     if (locked) return;
+    setHasUnsavedEdit(true);
     const { lines: newLines, ...header } = patch;
     Object.assign(pendingRef.current, header);
     if (newLines) {
@@ -307,6 +323,7 @@ export default function QuotationPage() {
       const payload = pendingRef.current;
       pendingRef.current = {};
       timerRef.current = null;
+      setHasUnsavedEdit(false);
       if (Object.keys(payload).length > 0) {
         patchMutation.mutate(payload);
       }
@@ -375,6 +392,10 @@ export default function QuotationPage() {
     sublabel: p.sku,
   }));
 
+  // Instant, local recompute so numbers move while typing. This is a
+  // transient overlay only — see showLiveOverlay/displayTotals below, which
+  // decide whether this or the server's authoritative draft.totals is what
+  // actually gets rendered.
   const liveTotals: QuotationTotals = draft
     ? computeQuotationTotals({
         lines: draft.lines.map((l) => ({ quantity: l.quantity, unitPrice: l.unitPrice })),
@@ -390,7 +411,32 @@ export default function QuotationPage() {
 
   const hasMissingSpecs = draft?.lines.some(isLineMissingSpecs) ?? false;
 
-  if (isLoading || !draft) {
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center">
+        <p className="text-sm text-gray-600">
+          {error instanceof Error ? error.message : 'Could not load this quotation.'}
+        </p>
+        <Button variant="secondary" size="md" onClick={() => router.push('/orders')}>
+          <ArrowLeft className="h-4 w-4" />
+          Back to orders
+        </Button>
+      </div>
+    );
+  }
+
+  if (!draft) {
+    // The query already resolved (isLoading is false, no error) but the
+    // useEffect that seeds `draft` from it hasn't committed yet — a one-render
+    // gap, not a failure. Keep spinning; the next render has draft set.
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
@@ -399,6 +445,22 @@ export default function QuotationPage() {
   }
 
   const t = I18N[lang];
+
+  // Money display authority: while an edit is queued or its save is in
+  // flight, show the instant local recompute so numbers move as you type;
+  // the moment a round trip completes, patchMutation's onSuccess replaces
+  // `draft` (including `totals` and every line's `lineTotal`) with the
+  // server's own numbers, and this flips back to reading those — never a
+  // second, independently-computed source of truth for money once a save
+  // has actually landed.
+  const showLiveOverlay = hasUnsavedEdit || patchMutation.isPending;
+  const displayTotals: QuotationTotals = showLiveOverlay ? liveTotals : draft.totals;
+  const lineTotal = (line: QuotationLine, index: number) =>
+    showLiveOverlay ? (liveTotals.lineTotals[index] ?? 0) : line.lineTotal;
+  // Matches the source's calcAll(): whole percents once >=10 or at exactly
+  // 0, one decimal place otherwise (so "5.3%", not "5.32%").
+  const formatDiscPct = (pct: number) => pct.toFixed(pct >= 10 || pct === 0 ? 0 : 1);
+
   // Fidelity note: the source form's calcAll() hides every `.disc-row`
   // (including the discount-amount input's own row) whenever the discount is
   // zero — on paper this is exactly what a customer should see. Doing that
@@ -406,7 +468,7 @@ export default function QuotationPage() {
   // staff *start* a discount from zero, so here it only collapses once the
   // quotation is locked (i.e. for the final, read-only/printed view); while
   // still editable the three discount rows stay visible regardless of value.
-  const hideDiscountRows = locked && liveTotals.discount === 0;
+  const hideDiscountRows = locked && displayTotals.discount === 0;
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -679,7 +741,7 @@ export default function QuotationPage() {
                       />
                     )}
                   </td>
-                  <td className="total">{(liveTotals.lineTotals[index] ?? 0).toFixed(2)}</td>
+                  <td className="total">{lineTotal(line, index).toFixed(2)}</td>
                   {!locked && (
                     <td className="action">
                       <button
@@ -749,7 +811,7 @@ export default function QuotationPage() {
               <div className="row">
                 <span className="label">{t.tSub}</span>
                 <span className="value">
-                  {liveTotals.subtotal.toFixed(2)} <span className="cur">{t.currency}</span>
+                  {displayTotals.subtotal.toFixed(2)} <span className="cur">{t.currency}</span>
                 </span>
               </div>
 
@@ -759,7 +821,7 @@ export default function QuotationPage() {
                     <span className="label">{t.tDiscAmt}</span>
                     {locked ? (
                       <span className="value">
-                        {liveTotals.discount.toFixed(2)} <span className="cur">{t.currency}</span>
+                        {displayTotals.discount.toFixed(2)} <span className="cur">{t.currency}</span>
                       </span>
                     ) : (
                       <span>
@@ -783,13 +845,13 @@ export default function QuotationPage() {
                       className="value"
                       style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600 }}
                     >
-                      {liveTotals.discountPercent}%
+                      {formatDiscPct(displayTotals.discountPercent)}%
                     </span>
                   </div>
                   <div className="row disc-row">
                     <span className="label">{t.tNet}</span>
                     <span className="value">
-                      {liveTotals.net.toFixed(2)} <span className="cur">{t.currency}</span>
+                      {displayTotals.net.toFixed(2)} <span className="cur">{t.currency}</span>
                     </span>
                   </div>
                 </>
@@ -816,7 +878,7 @@ export default function QuotationPage() {
                   <div className="row vat-row">
                     <span className="label">{t.tVatVal}</span>
                     <span className="value">
-                      {liveTotals.vat.toFixed(2)} <span className="cur">{t.currency}</span>
+                      {displayTotals.vat.toFixed(2)} <span className="cur">{t.currency}</span>
                     </span>
                   </div>
                 </>
@@ -825,7 +887,7 @@ export default function QuotationPage() {
               <div className="grand">
                 <span className="label">{t.tGrand}</span>
                 <span className="value">
-                  {liveTotals.grandTotal.toFixed(2)} <span className="cur">{t.currency}</span>
+                  {displayTotals.grandTotal.toFixed(2)} <span className="cur">{t.currency}</span>
                 </span>
               </div>
             </div>

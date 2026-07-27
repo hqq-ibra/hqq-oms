@@ -4,8 +4,15 @@
  * fresh document that receives this same text — hashed module class names
  * would not resolve there.
  *
- * Transformed from the source's <style> block (lines 9-352) by:
- *   1. Prefixing every top-level selector with `.qform `.
+ * Transformed from the source's <style> block (lines 9-352) by applying all
+ * five edits across the *entire* stylesheet, `@media print` included — the
+ * only at-rule left completely untouched is `@page`, which is document-level
+ * and cannot be scoped to begin with:
+ *   1. Prefixing every top-level selector with `.qform ` (inside `@media
+ *      print` and `@media (max-width: 720px)` too — e.g. `.page-foot {`
+ *      becomes `.qform .page-foot {`, and a bare `input, textarea {` becomes
+ *      `.qform input, .qform textarea {`, same treatment as the bare `*`
+ *      reset at the top of this file).
  *   2. Replacing `:root {` with `.qform {`.
  *   3. Replacing `html[dir="rtl"]` / `html[dir="ltr"]` with
  *      `.qform[dir="rtl"]` / `.qform[dir="ltr"]`.
@@ -13,14 +20,18 @@
  *      rules with a single `.qform { background: #eef0f3; ...; padding: 24px 12px; }` rule.
  *   5. Deleting every rule for `.img-slot`, `.paste-hint`, `.lightbox`,
  *      `td.img-cell`, `th.col-img`, `table.items.no-images`, and the
- *      `@keyframes fadeInPulse` block — there is no image column.
+ *      `@keyframes fadeInPulse` block, wherever they appear — including
+ *      inside `@media print`, where `.img-slot` (four rules), `.lightbox`
+ *      (combined with `.print-tip` in one rule — the whole rule was removed)
+ *      and `table.items.no-images` also occurred (six rule instances total).
+ *      There is no image column.
  *
- * `@page` and the `@media print` / `@media (max-width: 720px)` blocks are
- * NOT touched by edits 1-3/5 (see note above the `@media print` block below)
- * — the one exception is the `.qform-specs` rule added to `@media print`,
- * which is a new addition (Task 10 Step 3), not part of the source form.
+ * The `.qform-specs` and `.qform-warning` rules inside `@media print` are new
+ * additions (Task 10 Step 3), not part of the source form.
  *
- * One deliberate deviation from a byte-literal edit 3: the source rules
+ * One deliberate deviation from a byte-literal edit 3, applied consistently
+ * twice (once above, once inside `@media print` for the `body` print reset):
+ * the source rules
  * `html[dir="rtl"] body { font-family: 'Tajawal', 'Cairo', sans-serif; }`
  * and `html[dir="ltr"] body { font-family: 'Inter', sans-serif; }` set the
  * whole page's base font via the actual <body> element, which is a sibling
@@ -187,23 +198,19 @@ export const QUOTATION_CSS = `
   /* Print */
   @page { margin: 10mm; size: A4; }
   @media print {
-    body { background: #fff; padding: 0; }
-    .page { box-shadow: none; max-width: 100%; }
-    .table-actions, .btn-del { display: none !important; }
-    table.items th.col-action, table.items td.action { display: none !important; }
-    input, textarea { border: none !important; }
-    .meta input { border-bottom: 1px solid #ccc !important; }
-    .print-tip, .lightbox { display: none !important; }
-    /* Image slot in print: clean borders, no placeholder, no remove button */
-    .img-slot { border: 1px solid #ddd !important; background: #fff !important; cursor: default; transform: none !important; }
-    .img-slot:hover { border-color: #ddd !important; background: #fff !important; transform: none !important; }
-    .img-slot .placeholder, .img-slot .remove-img { display: none !important; }
-    .img-slot:not(.has-img) { border: none !important; }
-    /* Hide image column entirely in print when no images present */
-    table.items.no-images th.col-img,
-    table.items.no-images td.img-cell { display: none !important; }
+    /* Rebound to .qform itself, not ".qform body" — same reasoning as the
+       html[dir] body rebind above: body is never a descendant of .qform in
+       either the live app or the print window, so a literal descendant
+       selector here would be permanently dead and the print reset (clean
+       white background, no padding) would silently never apply. */
+    .qform { background: #fff; padding: 0; }
+    .qform .page { box-shadow: none; max-width: 100%; }
+    .qform .table-actions, .qform .btn-del { display: none !important; }
+    .qform table.items th.col-action, .qform table.items td.action { display: none !important; }
+    .qform input, .qform textarea { border: none !important; }
+    .qform .meta input { border-bottom: 1px solid #ccc !important; }
     /* Hide discount % info row in print — customer only sees the discount amount */
-    .disc-info-row { display: none !important; }
+    .qform .disc-info-row { display: none !important; }
     /* Mold spec editors are for staff only; the customer's copy shows the
        composed spec label baked into the description cell instead. */
     .qform .qform-specs { display: none; }
