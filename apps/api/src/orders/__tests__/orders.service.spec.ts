@@ -208,6 +208,87 @@ describe('OrdersService.create', () => {
     expect(quote.attn).toBe('Khaled');
     expect(quote.validUntil).toBeInstanceOf(Date);
   });
+
+  it('lets an explicit validUntil override the 14-day default', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    prisma.order.create.mockImplementation(({ data }: { data: any }) =>
+      Promise.resolve({ id: 'o1', ...data }),
+    );
+    const { service } = createService(prisma);
+
+    await service.create(
+      {
+        orderType: 'REPEAT',
+        customerId: 'c1',
+        items: [{ productId: 'p1', quantity: 1, unitPrice: 1 }],
+        quotation: { validUntil: '2030-01-01' },
+      },
+      'u1',
+    );
+
+    const quote = (prisma.order.create as Mock).mock.calls[0][0].data.quotation.create;
+    expect(quote.validUntil).toEqual(new Date('2030-01-01'));
+  });
+
+  it('refuses a negative or non-finite discount amount on the quotation header', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    const { service } = createService(prisma);
+    const items = [{ productId: 'p1', quantity: 1, unitPrice: 1 }];
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items, quotation: { discountAmount: -1 } },
+        'u1',
+      ),
+    ).rejects.toThrow(/discount/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items, quotation: { discountAmount: NaN } },
+        'u1',
+      ),
+    ).rejects.toThrow(/discount/i);
+
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an out-of-range or non-finite VAT percent on the quotation header', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    const { service } = createService(prisma);
+    const items = [{ productId: 'p1', quantity: 1, unitPrice: 1 }];
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items, quotation: { vatPercent: -15 } },
+        'u1',
+      ),
+    ).rejects.toThrow(/vat percent/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items, quotation: { vatPercent: 150 } },
+        'u1',
+      ),
+    ).rejects.toThrow(/vat percent/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items, quotation: { vatPercent: Infinity } },
+        'u1',
+      ),
+    ).rejects.toThrow(/vat percent/i);
+
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
 });
 
 function quotationOrder(overrides: Record<string, unknown> = {}) {
@@ -581,6 +662,42 @@ describe('OrdersService quotation endpoints', () => {
         data: expect.objectContaining({ discountAmount: 50, notes: 'Deposit 50%' }),
       }),
     );
+  });
+
+  it('refuses a negative or non-finite discount amount on a header edit', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { discountAmount: -1 }),
+    ).rejects.toThrow(/discount/i);
+
+    await expect(
+      service.updateQuotation('o1', { discountAmount: NaN }),
+    ).rejects.toThrow(/discount/i);
+
+    expect(prisma.orderQuotation.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an out-of-range or non-finite VAT percent on a header edit', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { vatPercent: -15 }),
+    ).rejects.toThrow(/vat percent/i);
+
+    await expect(
+      service.updateQuotation('o1', { vatPercent: 150 }),
+    ).rejects.toThrow(/vat percent/i);
+
+    await expect(
+      service.updateQuotation('o1', { vatPercent: Infinity }),
+    ).rejects.toThrow(/vat percent/i);
+
+    expect(prisma.orderQuotation.update).not.toHaveBeenCalled();
   });
 
   it('saves per-line price edits', async () => {

@@ -326,8 +326,18 @@ export default function NewOrderPage() {
     );
   };
 
+  // The grid's corner "X" is keyed by productId, but a mold placeholder can
+  // occupy several independently-configured lines under one productId — a
+  // naive filter-by-productId would silently wipe every design in one click.
+  // Mirrors updateQuantity's existing no-op for the same reason: a mold line
+  // is only ever removed individually in Step 2, where its specs are visible.
   const removeItem = (productId: string) => {
-    setOrderItems((prev) => prev.filter((i) => i.productId !== productId));
+    setOrderItems((prev) => {
+      if (prev.some((i) => i.productId === productId && i.requiresLineSpecs)) {
+        return prev;
+      }
+      return prev.filter((i) => i.productId !== productId);
+    });
   };
 
   const removeLine = (lineId: string) => {
@@ -604,6 +614,7 @@ export default function NewOrderPage() {
                             <button
                               type="button"
                               onClick={() => removeItem(product.id)}
+                              title={product.requiresLineSpecs ? 'Remove each design individually in the Quotation step' : 'Remove'}
                               className="absolute -right-1.5 -top-1.5 rounded-full bg-red-100 p-0.5 text-red-600 hover:bg-red-200"
                             >
                               <X className="h-3 w-3" />
@@ -707,6 +718,7 @@ export default function NewOrderPage() {
                             <button
                               type="button"
                               onClick={() => removeItem(product.id)}
+                              title={product.requiresLineSpecs ? 'Remove each design individually in the Quotation step' : 'Remove'}
                               className="absolute -right-1.5 -top-1.5 rounded-full bg-red-100 p-0.5 text-red-600 hover:bg-red-200"
                             >
                               <X className="h-3 w-3" />

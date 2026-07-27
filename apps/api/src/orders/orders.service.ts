@@ -160,6 +160,44 @@ export class OrdersService {
     return nextSequenceNumber(prefix, last?.factoryOrderNumber ?? null);
   }
 
+  /**
+   * Same money-guard rationale as the per-line quantity/unitPrice check:
+   * discountAmount and vatPercent feed computeQuotationTotals directly, and
+   * the result is written to the order's SELLING_PRICE cost row that
+   * Reports/Analytics reads as revenue. computeQuotationTotals floors
+   * discountAmount at 0 before using it, but a negative value stored here is
+   * still malformed input that should never reach the database. vatPercent
+   * has no such floor — a sufficiently negative value can drive grandTotal
+   * below zero, i.e. negative "revenue" — so it is bounded to a plausible VAT
+   * range (0-100%) rather than the 15% SAR default, since staff can type a
+   * different rate. Shared by create() and updateQuotation() so both write
+   * paths for the quotation header carry the same check.
+   */
+  private assertValidQuotationHeader(quotation?: {
+    discountAmount?: number;
+    vatEnabled?: boolean;
+    vatPercent?: number;
+  }): void {
+    if (!quotation) return;
+    if (
+      quotation.discountAmount !== undefined &&
+      (!Number.isFinite(quotation.discountAmount) || quotation.discountAmount < 0)
+    ) {
+      throw new BadRequestException('Discount amount must be a non-negative number');
+    }
+    if (quotation.vatEnabled !== undefined && typeof quotation.vatEnabled !== 'boolean') {
+      throw new BadRequestException('vatEnabled must be a boolean');
+    }
+    if (
+      quotation.vatPercent !== undefined &&
+      (!Number.isFinite(quotation.vatPercent) ||
+        quotation.vatPercent < 0 ||
+        quotation.vatPercent > 100)
+    ) {
+      throw new BadRequestException('VAT percent must be between 0 and 100');
+    }
+  }
+
   async create(
     dto: {
       orderType: string;
@@ -201,6 +239,7 @@ export class OrdersService {
         throw new BadRequestException('Unit price cannot be negative');
       }
     }
+    this.assertValidQuotationHeader(dto.quotation);
 
     const customer = await this.prisma.customer.findUnique({
       where: { id: dto.customerId },
@@ -772,6 +811,7 @@ export class OrdersService {
     }
 
     const { lines, quoteDate, validUntil, ...rest } = dto;
+    this.assertValidQuotationHeader(rest);
 
     const headerData: Record<string, unknown> = { ...rest };
     if (quoteDate !== undefined) headerData.quoteDate = new Date(quoteDate);
