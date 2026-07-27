@@ -175,6 +175,14 @@ export class OrdersService {
       expectedDeliveryDate?: string;
       assignedUserId?: string | null;
       internalNotes?: string;
+      quotation?: {
+        validUntil?: string;
+        payMethod?: string;
+        notes?: string;
+        discountAmount?: number;
+        vatEnabled?: boolean;
+        vatPercent?: number;
+      };
     },
     userId: string,
   ) {
@@ -241,6 +249,20 @@ export class OrdersService {
             clientBlock: defaults.clientBlock,
             contact: defaults.contact,
             attn: defaults.attn,
+            ...(dto.quotation?.validUntil
+              ? { validUntil: new Date(dto.quotation.validUntil) }
+              : {}),
+            ...(dto.quotation?.payMethod ? { payMethod: dto.quotation.payMethod } : {}),
+            ...(dto.quotation?.notes ? { notes: dto.quotation.notes } : {}),
+            ...(dto.quotation?.discountAmount !== undefined
+              ? { discountAmount: dto.quotation.discountAmount }
+              : {}),
+            ...(dto.quotation?.vatEnabled !== undefined
+              ? { vatEnabled: dto.quotation.vatEnabled }
+              : {}),
+            ...(dto.quotation?.vatPercent !== undefined
+              ? { vatPercent: dto.quotation.vatPercent }
+              : {}),
           },
         },
       },
