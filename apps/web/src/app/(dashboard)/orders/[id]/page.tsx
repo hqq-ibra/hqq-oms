@@ -359,9 +359,9 @@ export default function OrderDetailPage() {
 
   const shippingMutation = useMutation({
     mutationFn: (dto: {
-      shippingCompany?: string;
-      trackingNumber?: string;
-      trackingUrl?: string;
+      shippingCompany?: string | null;
+      trackingNumber?: string | null;
+      trackingUrl?: string | null;
     }) => api.patch(`/api/v1/orders/${id}`, dto),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order', id] });
@@ -1157,9 +1157,9 @@ function ShippingForm({
   trackingNumber: string | null;
   trackingUrl: string | null;
   onSave: (dto: {
-    shippingCompany?: string;
-    trackingNumber?: string;
-    trackingUrl?: string;
+    shippingCompany?: string | null;
+    trackingNumber?: string | null;
+    trackingUrl?: string | null;
   }) => void;
   isPending: boolean;
 }) {
@@ -1168,13 +1168,34 @@ function ShippingForm({
   const [url, setUrl] = useState(trackingUrl ?? '');
   const [editing, setEditing] = useState(false);
 
+  // Only a field the user actually changed goes in the payload, and a field
+  // they emptied is sent as an explicit `null` (not omitted) so it actually
+  // clears server-side instead of leaving the old value in place. If nothing
+  // changed, the payload is empty and the mutation never fires — the server
+  // now rejects an empty update, and firing it anyway just produced a
+  // misleading error toast for a no-op save.
+  const diff = (current: string, original: string | null): string | null | undefined => {
+    const trimmed = current.trim();
+    if (trimmed === (original ?? '')) return undefined;
+    return trimmed === '' ? null : trimmed;
+  };
+
   const handleSave = () => {
-    onSave({
-      shippingCompany: company || undefined,
-      trackingNumber: tracking || undefined,
-      trackingUrl: url || undefined,
-    });
+    const dto: {
+      shippingCompany?: string | null;
+      trackingNumber?: string | null;
+      trackingUrl?: string | null;
+    } = {};
+    const companyDiff = diff(company, shippingCompany);
+    const trackingDiff = diff(tracking, trackingNumber);
+    const urlDiff = diff(url, trackingUrl);
+    if (companyDiff !== undefined) dto.shippingCompany = companyDiff;
+    if (trackingDiff !== undefined) dto.trackingNumber = trackingDiff;
+    if (urlDiff !== undefined) dto.trackingUrl = urlDiff;
+
     setEditing(false);
+    if (Object.keys(dto).length === 0) return;
+    onSave(dto);
   };
 
   return (

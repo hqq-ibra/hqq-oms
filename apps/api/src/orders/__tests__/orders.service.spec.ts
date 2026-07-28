@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { OrdersService } from '../orders.service';
 
 type Mock = jest.Mock;
@@ -1039,5 +1039,178 @@ describe('OrdersService.list', () => {
     const where = (prisma.order.findMany as Mock).mock.calls[0][0].where;
     expect(where.status).toBe('QUOTATION');
     expect(where.AND).toBeUndefined();
+  });
+});
+
+describe('OrdersService.update — mass-assignment allow-list', () => {
+  // update() discards getById()'s return value; it only uses the call to
+  // confirm the order exists, so the mock need not be a full order row.
+  function mockExistingOrder(prisma: Record<string, any>) {
+    prisma.order.findUnique.mockResolvedValue({ id: 'o1' });
+  }
+
+  it('drops a bare status field instead of writing it — the core of the hole', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    prisma.order.update.mockResolvedValue({ id: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.update(
+      'o1',
+      { status: 'CONFIRMED', internalNotes: 'ok' } as any,
+      'u1',
+    );
+
+    // toEqual on the whole data payload, not objectContaining: a rest-spread
+    // regression would smuggle `status` back in and this fails instantly.
+    expect((prisma.order.update as Mock).mock.calls[0][0].data).toEqual({
+      internalNotes: 'ok',
+    });
+  });
+
+  it('drops orderNumber, customerId and createdAt from a mixed payload', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    prisma.order.update.mockResolvedValue({ id: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.update(
+      'o1',
+      {
+        orderNumber: 'ORD-2020-0001',
+        customerId: 'some-other-customer',
+        createdAt: new Date('2020-01-01'),
+        internalNotes: 'legit note',
+      } as any,
+      'u1',
+    );
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data).toEqual({
+      internalNotes: 'legit note',
+    });
+  });
+
+  it('passes through all six legitimate fields', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    prisma.order.update.mockResolvedValue({ id: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.update(
+      'o1',
+      {
+        shippingCompany: 'DHL',
+        trackingNumber: 'TRK123',
+        trackingUrl: 'https://track.example/TRK123',
+        internalNotes: 'Handle with care',
+        assignedUserId: 'u2',
+        expectedDeliveryDate: '2026-08-01T00:00:00.000Z',
+      } as any,
+      'u1',
+    );
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data).toEqual({
+      shippingCompany: 'DHL',
+      trackingNumber: 'TRK123',
+      trackingUrl: 'https://track.example/TRK123',
+      internalNotes: 'Handle with care',
+      assignedUserId: 'u2',
+      expectedDeliveryDate: new Date('2026-08-01T00:00:00.000Z'),
+    });
+  });
+
+  it('converts an expectedDeliveryDate ISO string to a real Date instance', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    prisma.order.update.mockResolvedValue({ id: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.update('o1', { expectedDeliveryDate: '2026-09-15' } as any, 'u1');
+
+    const data = (prisma.order.update as Mock).mock.calls[0][0].data;
+    expect(data.expectedDeliveryDate).toBeInstanceOf(Date);
+    expect((data.expectedDeliveryDate as Date).toISOString()).toBe(
+      new Date('2026-09-15').toISOString(),
+    );
+  });
+
+  it('lets an explicit null clear expectedDeliveryDate', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    prisma.order.update.mockResolvedValue({ id: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.update('o1', { expectedDeliveryDate: null } as any, 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data).toEqual({
+      expectedDeliveryDate: null,
+    });
+  });
+
+  it('rejects an unparseable expectedDeliveryDate instead of writing Invalid Date', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.update('o1', { expectedDeliveryDate: 'not-a-date' } as any, 'u1'),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a payload made entirely of disallowed keys, and touches nothing', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.update(
+        'o1',
+        { status: 'CONFIRMED', orderNumber: 'ORD-2020-0001' } as any,
+        'u1',
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an entirely empty body', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    await expect(service.update('o1', {} as any, 'u1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a boolean or numeric expectedDeliveryDate instead of coercing it', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    // new Date(x) silently coerces these instead of failing: `true` becomes
+    // 1970-01-01T00:00:00.001Z and `0` becomes the epoch. Only a string (the
+    // wire format) or an already-real Date is legitimate input.
+    await expect(
+      service.update('o1', { expectedDeliveryDate: true } as any, 'u1'),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.update('o1', { expectedDeliveryDate: 0 } as any, 'u1'),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('emits order.updated over the websocket on a successful update', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const updated = { id: 'o1', internalNotes: 'ok' };
+    prisma.order.update.mockResolvedValue(updated);
+    const { service, ws } = createService(prisma);
+
+    const result = await service.update('o1', { internalNotes: 'ok' } as any, 'u1');
+
+    expect(ws.emit).toHaveBeenCalledWith('order.updated', updated);
+    expect(result).toBe(updated);
   });
 });

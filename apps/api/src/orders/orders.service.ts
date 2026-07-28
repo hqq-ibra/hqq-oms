@@ -81,6 +81,29 @@ const QUOTATION_LINE_FIELDS = [
   'specs',
 ] as const;
 
+/**
+ * Mass-assignment allow-list for update() — same defect, same fix. That
+ * method's own `Partial<{...}>` parameter type is compile-time decoration
+ * only (orders.controller.ts:109-124 casts a `Record<string, unknown>` body
+ * with no class-validator DTO), so a rest-spread of `dto` into
+ * `prisma.order.update` reaches the Unchecked update input and exposes every
+ * scalar column — including `status`, which would flip a quotation to
+ * CONFIRMED without going through changeStatus() and its stock decrement,
+ * SELLING_PRICE cost row and status-history entry, plus `orderNumber`,
+ * `customerId`, `createdAt` and everything else on the row.
+ *
+ * expectedDeliveryDate is deliberately absent: it arrives as an ISO string
+ * (or explicit null) and is converted to Date separately in update(), the
+ * same way quoteDate / validUntil are handled in updateQuotation().
+ */
+const ORDER_UPDATE_FIELDS = [
+  'shippingCompany',
+  'trackingNumber',
+  'trackingUrl',
+  'internalNotes',
+  'assignedUserId',
+] as const;
+
 function pickAllowed(
   source: object,
   allowed: readonly string[],
@@ -464,9 +487,46 @@ export class OrdersService {
     userId: string,
   ) {
     await this.getById(id);
+
+    // Allow-list pick, never a rest-spread of the raw body — see
+    // ORDER_UPDATE_FIELDS. A `{"status": "CONFIRMED"}` or `{"orderNumber":
+    // "ORD-2020-0001"}` key is dropped here instead of being handed to
+    // Prisma's Unchecked update input.
+    const updateData = pickAllowed(dto, ORDER_UPDATE_FIELDS);
+
+    if (Object.prototype.hasOwnProperty.call(dto, 'expectedDeliveryDate')) {
+      const raw = dto.expectedDeliveryDate as unknown;
+      if (raw === null) {
+        updateData.expectedDeliveryDate = null;
+      } else if (typeof raw !== 'string' && !(raw instanceof Date)) {
+        // `new Date(x)` coerces non-string primitives instead of rejecting
+        // them: `true` becomes 1970-01-01T00:00:00.001Z, `0` becomes the
+        // epoch, `[2026]` becomes the year 2026. Only a string (the wire
+        // format) or an already-real Date is a legitimate input here.
+        throw new BadRequestException(
+          'expectedDeliveryDate must be a valid date or null',
+        );
+      } else {
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new BadRequestException(
+            'expectedDeliveryDate must be a valid date or null',
+          );
+        }
+        updateData.expectedDeliveryDate = parsed;
+      }
+    }
+
+    // A payload made entirely of disallowed keys picks down to nothing. A
+    // no-op prisma.order.update would still emit order.updated over the
+    // websocket and look like it worked — fail loudly instead.
+    if (Object.keys(updateData).length === 0) {
+      throw new BadRequestException('No valid fields to update');
+    }
+
     const order = await this.prisma.order.update({
       where: { id },
-      data: dto,
+      data: updateData,
       include: {
         customer: true,
         product: true,
