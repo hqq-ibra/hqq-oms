@@ -40,6 +40,17 @@ export class OperationsService {
     );
   }
 
+  /**
+   * "Overdue" means a committed order that has passed its promised date.
+   * QUOTATION and REJECTED are excluded: the new-order wizard sets
+   * expected_delivery_date on step 3, so every quotation carries one, and
+   * without the predicate a quote the customer *declined* would sit in this
+   * report forever, counted as late business. A rejected quote is dead by
+   * definition; an unconfirmed quotation is not late, it is unanswered —
+   * which is what the Quotations tab's "Waiting" column is for. The
+   * delayed / nearDeadline list filters in orders.service.ts exclude the same
+   * set for the same reason.
+   */
   async getOverdue(): Promise<OverdueOrderRow[]> {
     const rows = await this.prisma.$queryRaw<RawOverdueOrderRow[]>`
       SELECT o.id            AS "orderId",
@@ -51,6 +62,7 @@ export class OperationsService {
       FROM orders o
       JOIN customers c ON c.id = o.customer_id
       WHERE o.completed_at IS NULL
+        AND o.status NOT IN ('QUOTATION', 'REJECTED')
         AND o.expected_delivery_date IS NOT NULL
         AND o.expected_delivery_date < NOW()
       ORDER BY "daysOverdue" DESC

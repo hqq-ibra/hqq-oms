@@ -34,6 +34,66 @@ export interface PaginatedOrdersResult {
   totalPages: number;
 }
 
+/**
+ * Statuses that the delivery-date filters (delayed / nearDeadline) must never
+ * return. COMPLETED is done, REJECTED is dead by definition, and a QUOTATION
+ * is not *late* — it is unanswered, which is what the Quotations tab's
+ * "Waiting" column tracks. The new-order wizard sets expectedDeliveryDate on
+ * step 3, so quotations do carry one and would otherwise surface here.
+ * The overdue-orders report (analytics/operations.service.ts) excludes the
+ * same set for the same reason — keep the two in step.
+ */
+const DELIVERY_EXCLUDED_STATUSES = ['COMPLETED', 'REJECTED', 'QUOTATION'];
+
+/**
+ * Mass-assignment allow-lists for the two quotation write paths.
+ *
+ * orders.controller.ts casts the raw request body (`dto as Parameters<...>`)
+ * with no class-validator DTO, so the TypeScript field lists on
+ * updateQuotation() are compile-time decoration only — at runtime the body is
+ * whatever the client sent. Spreading it into Prisma would reach the
+ * *Unchecked* input variants, which accept `id`, `orderId`, `createdAt` (and
+ * `productId` on an item): a client could re-point a line or a whole
+ * quotation onto another, already-CONFIRMED order, or rewrite an audit
+ * timestamp. Every field written to the database is therefore picked by name
+ * from these lists and never rest-spread.
+ *
+ * quoteDate / validUntil are deliberately absent: they arrive as strings and
+ * are converted to Date separately in updateQuotation().
+ */
+const QUOTATION_HEADER_FIELDS = [
+  'payMethod',
+  'clientBlock',
+  'contact',
+  'attn',
+  'notes',
+  'discountAmount',
+  'vatEnabled',
+  'vatPercent',
+  'language',
+] as const;
+
+const QUOTATION_LINE_FIELDS = [
+  'quantity',
+  'unitPrice',
+  'unitLabel',
+  'description',
+  'specs',
+] as const;
+
+function pickAllowed(
+  source: object,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      picked[key] = (source as Record<string, unknown>)[key];
+    }
+  }
+  return picked;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -64,9 +124,16 @@ export class OrdersService {
       ];
     }
 
+    // Composed onto `where.AND`, never assigned to `where.status`: that
+    // overwrote an explicit status filter wholesale, so ticking Delayed on the
+    // Quotations tab (which forces status=QUOTATION and disables the Status
+    // select) returned every non-completed order in the system while still
+    // rendering quotation-only columns.
+    let restrictToDeliverable = false;
+
     if (filters.delayed) {
       where.expectedDeliveryDate = { lt: new Date() };
-      where.status = { not: 'COMPLETED' };
+      restrictToDeliverable = true;
     }
 
     if (filters.nearDeadline) {
@@ -77,7 +144,14 @@ export class OrdersService {
         gte: now,
         lte: in7Days,
       };
-      where.status = { not: 'COMPLETED' };
+      restrictToDeliverable = true;
+    }
+
+    if (restrictToDeliverable) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? (where.AND as unknown[]) : []),
+        { status: { notIn: DELIVERY_EXCLUDED_STATUSES } },
+      ];
     }
 
     const [data, total] = await Promise.all([
@@ -201,6 +275,50 @@ export class OrdersService {
     }
   }
 
+  /**
+   * The one line-money guard, shared by every path that writes a quantity or a
+   * unit price: create(), addItem(), updateItem() and updateQuotation()'s
+   * per-line branch. There were three divergent copies before — create()'s
+   * admitted Infinity (`Infinity < 0` is false, and `{"unitPrice": 1e999}`
+   * parses to Infinity over JSON) and addItem()'s validated nothing at all.
+   *
+   * Number.isFinite, not just a range check: the controller casts the raw body
+   * with no class-validator DTO, so NaN, Infinity and non-numbers all reach
+   * here. These values multiply straight through computeQuotationTotals into
+   * the SELLING_PRICE cost row that Reports and Analytics read as revenue.
+   */
+  private assertValidLineMoney(
+    line: { quantity?: number | null; unitPrice?: number | null },
+    opts: { quantityRequired?: boolean } = {},
+  ): void {
+    if (opts.quantityRequired || (line.quantity !== undefined && line.quantity !== null)) {
+      if (!Number.isFinite(line.quantity) || (line.quantity as number) < 1) {
+        throw new BadRequestException('Quantity must be at least 1');
+      }
+    }
+    if (line.unitPrice !== undefined && line.unitPrice !== null) {
+      if (!Number.isFinite(line.unitPrice) || line.unitPrice < 0) {
+        throw new BadRequestException('Unit price must be a non-negative number');
+      }
+    }
+  }
+
+  /**
+   * Revenue (the SELLING_PRICE cost row) and the stock decrement are both
+   * derived exactly once, at the confirmation instant, from the lines as they
+   * stand then. Editing lines afterwards would leave revenue and inventory
+   * recorded against quantities the order no longer has, while the quotation
+   * print view showed server-recomputed totals contradicting the books. So the
+   * item write paths lock at the same point updateQuotation() does.
+   */
+  private assertItemsEditable(order: { status: string }): void {
+    if (order.status !== 'QUOTATION') {
+      throw new ConflictException(
+        'Order items are locked because the order is no longer a quotation',
+      );
+    }
+  }
+
   async create(
     dto: {
       orderType: string;
@@ -232,15 +350,10 @@ export class OrdersService {
     }
 
     // Money guard: computeQuotationTotals multiplies these straight through, so
-    // a negative slipping in would print a negative line on a customer quotation
-    // and be written to the order's selling price.
+    // a negative or non-finite value slipping in would print a broken line on a
+    // customer quotation and be written to the order's selling price.
     for (const item of dto.items) {
-      if (!Number.isFinite(item.quantity) || item.quantity < 1) {
-        throw new BadRequestException('Quantity must be at least 1');
-      }
-      if (item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice < 0) {
-        throw new BadRequestException('Unit price cannot be negative');
-      }
+      this.assertValidLineMoney(item, { quantityRequired: true });
     }
     this.assertValidQuotationHeader(dto.quotation);
 
@@ -583,6 +696,8 @@ export class OrdersService {
 
   async addItem(orderId: string, dto: { productId: string; quantity: number }, userId: string) {
     const order = await this.getById(orderId);
+    this.assertItemsEditable(order);
+    this.assertValidLineMoney({ quantity: dto.quantity }, { quantityRequired: true });
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       select: { requiresLineSpecs: true },
@@ -630,8 +745,9 @@ export class OrdersService {
   }
 
   async updateItem(orderId: string, itemId: string, dto: { quantity: number }) {
-    await this.getById(orderId);
-    if (dto.quantity < 1) throw new BadRequestException('Quantity must be at least 1');
+    const order = await this.getById(orderId);
+    this.assertItemsEditable(order);
+    this.assertValidLineMoney({ quantity: dto.quantity }, { quantityRequired: true });
     const item = await this.prisma.orderItem.findFirst({ where: { id: itemId, orderId } });
     if (!item) throw new NotFoundException('Order item not found');
     const updated = await this.prisma.orderItem.update({
@@ -644,7 +760,8 @@ export class OrdersService {
   }
 
   async removeItem(orderId: string, itemId: string) {
-    await this.getById(orderId);
+    const order = await this.getById(orderId);
+    this.assertItemsEditable(order);
     const item = await this.prisma.orderItem.findFirst({ where: { id: itemId, orderId } });
     if (!item) throw new NotFoundException('Order item not found');
     await this.prisma.orderItem.delete({ where: { id: itemId } });
@@ -813,10 +930,14 @@ export class OrdersService {
       );
     }
 
-    const { lines, quoteDate, validUntil, ...rest } = dto;
-    this.assertValidQuotationHeader(rest);
+    const { lines, quoteDate, validUntil } = dto;
+    this.assertValidQuotationHeader(dto);
 
-    const headerData: Record<string, unknown> = { ...rest };
+    // Allow-list pick, never a rest-spread of the raw body — see
+    // QUOTATION_HEADER_FIELDS. A `{"orderId": "<other order>"}` or
+    // `{"createdAt": "2020-01-01"}` key is dropped here instead of being
+    // handed to Prisma's Unchecked update input.
+    const headerData = pickAllowed(dto, QUOTATION_HEADER_FIELDS);
     if (quoteDate !== undefined) headerData.quoteDate = new Date(quoteDate);
     if (validUntil !== undefined) {
       headerData.validUntil = validUntil ? new Date(validUntil) : null;
@@ -830,23 +951,17 @@ export class OrdersService {
     }
 
     for (const line of lines ?? []) {
-      const { id: lineId, ...lineData } = line;
+      const lineId = line.id;
+      // Allow-list pick — see QUOTATION_LINE_FIELDS. Rest-spreading here let a
+      // body carry `orderId` (moving one of this quotation's lines into
+      // another, already-confirmed order — right past the ownership guard
+      // below, which only proves the line *starts out* mine), `productId`,
+      // `id`, or `createdAt` straight into prisma.orderItem.update.
+      const lineData = pickAllowed(line, QUOTATION_LINE_FIELDS);
       if (Object.keys(lineData).length === 0) continue;
 
-      // Same money guard as create(): these feed computeQuotationTotals directly.
-      if (lineData.quantity !== undefined) {
-        if (!Number.isFinite(lineData.quantity) || lineData.quantity < 1) {
-          throw new BadRequestException('Quantity must be at least 1');
-        }
-      }
-      if (lineData.unitPrice !== undefined && lineData.unitPrice !== null) {
-        // Number.isFinite, not just `< 0`: the controller casts the raw body
-        // with no class-validator DTO, so NaN and Infinity can reach here and
-        // would poison every downstream total.
-        if (!Number.isFinite(lineData.unitPrice) || lineData.unitPrice < 0) {
-          throw new BadRequestException('Unit price must be a non-negative number');
-        }
-      }
+      // Same money guard as create() and the item endpoints.
+      this.assertValidLineMoney(line);
 
       // Same ownership guard as updateItem: without it, a lineId belonging to
       // a different (possibly locked/CONFIRMED) order could be edited through

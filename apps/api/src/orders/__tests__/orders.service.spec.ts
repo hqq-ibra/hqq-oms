@@ -161,6 +161,39 @@ describe('OrdersService.create', () => {
     expect(lines[1].orderIndex).toBe(1);
   });
 
+  it('refuses a non-finite unit price, which JSON can carry as 1e999', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    const { service } = createService(prisma);
+
+    // `Infinity < 0` is false, so the old `unitPrice < 0` check admitted it
+    // straight into a Decimal(14,2) column.
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 1, unitPrice: Infinity }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/non-negative/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 1, unitPrice: NaN }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/non-negative/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: Infinity, unitPrice: 1 }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/at least 1/i);
+
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
   it('refuses a non-positive quantity or a negative price', async () => {
     const prisma = createPrismaMock();
     prisma.customer.findUnique.mockResolvedValue({
@@ -719,6 +752,140 @@ describe('OrdersService quotation endpoints', () => {
       }),
     );
   });
+
+  // The controller casts the raw body, so the DTO's field list is compile-time
+  // decoration only: at runtime whatever the client sent used to be
+  // rest-spread into Prisma's *Unchecked* update inputs.
+  it('ignores unknown header keys instead of writing them to the quotation row', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      notes: 'Deposit 50%',
+      // None of these are part of the endpoint's contract.
+      id: 'forged-quotation-row',
+      orderId: 'some-other-confirmed-order',
+      createdAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: '2020-01-01T00:00:00.000Z',
+    } as never);
+
+    const data = (prisma.orderQuotation.update as Mock).mock.calls[0][0].data;
+    expect(data).toEqual({ notes: 'Deposit 50%' });
+    expect(data).not.toHaveProperty('id');
+    expect(data).not.toHaveProperty('orderId');
+    expect(data).not.toHaveProperty('createdAt');
+    expect(data).not.toHaveProperty('updatedAt');
+  });
+
+  it('does not update the header at all when a body carries only unknown keys', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      orderId: 'some-other-confirmed-order',
+    } as never);
+
+    expect(prisma.orderQuotation.update).not.toHaveBeenCalled();
+  });
+
+  // The exploit this closes: the ownership guard proves the line *starts out*
+  // mine, then the write moved it into a locked CONFIRMED order.
+  it('refuses to re-point a line at another order through the lines payload', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [
+        {
+          id: 'i1',
+          quantity: 9999,
+          orderId: 'some-other-confirmed-order',
+          productId: 'a-more-expensive-product',
+          createdAt: '2020-01-01T00:00:00.000Z',
+        },
+      ],
+    } as never);
+
+    const data = (prisma.orderItem.update as Mock).mock.calls[0][0].data;
+    expect(data).toEqual({ quantity: 9999 });
+    expect(data).not.toHaveProperty('orderId');
+    expect(data).not.toHaveProperty('productId');
+    expect(data).not.toHaveProperty('id');
+    expect(data).not.toHaveProperty('createdAt');
+  });
+
+  it('does not touch a line whose payload carries only unknown keys', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [{ id: 'i1', orderId: 'some-other-confirmed-order', productId: 'p9' }],
+    } as never);
+
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+});
+
+// Revenue (the SELLING_PRICE row) and stock both move exactly once, at
+// confirmation, from the lines as they stand then. Editing lines afterwards
+// would leave the books recording quantities the order no longer has.
+describe('OrdersService item endpoints — locked after confirmation', () => {
+  function setupAt(status: string) {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      id: 'o1', customerId: 'c1', status, items: [], costs: [], statusHistory: [],
+    });
+    prisma.product.findUnique.mockResolvedValue({ requiresLineSpecs: false });
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1', quantity: 1 });
+    prisma.orderItem.count = jest.fn().mockResolvedValue(0);
+    prisma.orderItem.delete = jest.fn();
+    return { prisma, ...createService(prisma) };
+  }
+
+  for (const status of ['CONFIRMED', 'COMPLETED', 'REJECTED']) {
+    it(`refuses addItem on a ${status} order`, async () => {
+      const { prisma, service } = setupAt(status);
+      await expect(
+        service.addItem('o1', { productId: 'p1', quantity: 1 }, 'u1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it(`refuses updateItem on a ${status} order`, async () => {
+      const { prisma, service } = setupAt(status);
+      await expect(
+        service.updateItem('o1', 'i1', { quantity: 100 }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it(`refuses removeItem on a ${status} order`, async () => {
+      const { prisma, service } = setupAt(status);
+      await expect(service.removeItem('o1', 'i1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.orderItem.delete).not.toHaveBeenCalled();
+    });
+  }
+
+  it('still allows all three while the order is a quotation', async () => {
+    const { prisma, service } = setupAt('QUOTATION');
+    prisma.orderItem.update.mockResolvedValue({ id: 'i1' });
+
+    await service.addItem('o1', { productId: 'p1', quantity: 1 }, 'u1');
+    await service.updateItem('o1', 'i1', { quantity: 4 });
+    await service.removeItem('o1', 'i1');
+
+    expect(prisma.orderItem.update).toHaveBeenCalled();
+    expect(prisma.orderItem.delete).toHaveBeenCalled();
+  });
 });
 
 describe('OrdersService.addItem', () => {
@@ -751,6 +918,27 @@ describe('OrdersService.addItem', () => {
         data: expect.objectContaining({ productId: 'mold', orderIndex: 2 }),
       }),
     );
+  });
+
+  // addItem validated nothing at all before: a negative quantity wrote a
+  // negative line that flowed straight into computeQuotationTotals.
+  it('refuses a non-positive or non-finite quantity', async () => {
+    const { prisma, service } = setupAdd(false);
+
+    await expect(
+      service.addItem('o1', { productId: 'p1', quantity: -5 }, 'u1'),
+    ).rejects.toThrow(/at least 1/i);
+
+    await expect(
+      service.addItem('o1', { productId: 'p1', quantity: 0 }, 'u1'),
+    ).rejects.toThrow(/at least 1/i);
+
+    await expect(
+      service.addItem('o1', { productId: 'p1', quantity: NaN }, 'u1'),
+    ).rejects.toThrow(/at least 1/i);
+
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
   });
 });
 
@@ -794,5 +982,62 @@ describe('OrdersService.list', () => {
         { quoteNumber: { contains: 'QT-2026', mode: 'insensitive' } },
       ]),
     );
+  });
+
+  // The Quotations tab disables the Status select but leaves the Delayed and
+  // Near-deadline checkboxes live. `where.status` used to be overwritten
+  // wholesale with { not: 'COMPLETED' }, so ticking either returned every
+  // non-completed order in the system under a "Quotations" heading.
+  it('keeps an explicit status filter when the delayed filter is applied', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ status: 'QUOTATION', delayed: true });
+
+    const where = (prisma.order.findMany as Mock).mock.calls[0][0].where;
+    expect(where.status).toBe('QUOTATION');
+    expect(where.expectedDeliveryDate).toEqual({ lt: expect.any(Date) });
+    expect(where.AND).toEqual([
+      { status: { notIn: ['COMPLETED', 'REJECTED', 'QUOTATION'] } },
+    ]);
+  });
+
+  it('keeps an explicit status filter when the near-deadline filter is applied', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ status: 'CONFIRMED', nearDeadline: true });
+
+    const where = (prisma.order.findMany as Mock).mock.calls[0][0].where;
+    expect(where.status).toBe('CONFIRMED');
+    expect(where.AND).toEqual([
+      { status: { notIn: ['COMPLETED', 'REJECTED', 'QUOTATION'] } },
+    ]);
+  });
+
+  // A quotation is not late, it is unanswered; a rejected quote is dead.
+  // Same exclusion as the overdue-orders report in analytics/operations.
+  it('excludes quotations and rejections from the delivery-date filters', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ delayed: true });
+
+    const where = (prisma.order.findMany as Mock).mock.calls[0][0].where;
+    expect(where.status).toBeUndefined();
+    expect(where.AND).toEqual([
+      { status: { notIn: ['COMPLETED', 'REJECTED', 'QUOTATION'] } },
+    ]);
+  });
+
+  it('leaves the status filter untouched when neither delivery filter is set', async () => {
+    const prisma = createPrismaMock();
+    const { service } = createService(prisma);
+
+    await service.list({ status: 'QUOTATION' });
+
+    const where = (prisma.order.findMany as Mock).mock.calls[0][0].where;
+    expect(where.status).toBe('QUOTATION');
+    expect(where.AND).toBeUndefined();
   });
 });

@@ -3578,12 +3578,46 @@ git merge --no-ff feat/order-quotation-stage
 
 The live database is the **`hqq_db`** docker container on port **5434** (user `hqq`, database `hqq_oms`), per `/opt/hqq-oms/.env`. The `hqq_postgres` container on 5432 is unused — do not touch it.
 
+Take the dump in **custom format** (`-Fc`). A plain-SQL dump taken without
+`--clean` cannot restore over an existing, still-populated database: every
+`CREATE TABLE` fails with "relation already exists", `psql` has no
+`ON_ERROR_STOP` by default so it keeps going, and the `COPY` blocks then
+either duplicate rows or die on primary-key conflicts — leaving the database
+in a worse state than the failure being rolled back from. Custom format
+restores through `pg_restore --clean --if-exists`, which drops each object
+before recreating it.
+
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "docker exec hqq_db pg_dump -U hqq hqq_oms | gzip > /root/hqq_oms-before-quotation-$(date +%Y%m%d).sql.gz && ls -lh /root/hqq_oms-before-quotation-*.sql.gz"
+  "docker exec hqq_db pg_dump -U hqq -Fc hqq_oms > /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && ls -lh /root/hqq_oms-before-quotation-*.dump"
 ```
 
-Confirm the file is non-trivial in size before continuing. **Do not proceed without a verified backup** — the migration rewrites the `status` column on every order.
+Confirm the file is non-trivial in size before continuing.
+
+- [ ] **Step 2b: Prove the dump is restorable — before the migration runs**
+
+A backup nobody has restored is a hypothesis, not a backup. Restore it into a
+scratch database on the same container and compare row counts against the live
+one. **Do not proceed to Step 3 until this passes** — the migration rewrites
+the `status` column on every order, and this dump is the only way back.
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d postgres -c 'DROP DATABASE IF EXISTS hqq_oms_restorecheck;' -c 'CREATE DATABASE hqq_oms_restorecheck OWNER hqq;' && \
+   docker exec -i hqq_db pg_restore --no-owner -U hqq -d hqq_oms_restorecheck < /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && \
+   docker exec hqq_db psql -U hqq -d hqq_oms_restorecheck -c \"SELECT 'restored' AS src, (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_items) AS items, (SELECT count(*) FROM customers) AS customers;\" && \
+   docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT 'live' AS src, (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_items) AS items, (SELECT count(*) FROM customers) AS customers;\""
+```
+
+The two rows must match exactly. `pg_restore` may print warnings about roles or
+extensions it could not recreate in the scratch database — those are fine; a
+non-zero exit or a mismatched count is not. Then drop the scratch database so
+it cannot be mistaken for the live one:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d postgres -c 'DROP DATABASE hqq_oms_restorecheck;'"
+```
 
 - [ ] **Step 3: Ship the code**
 
@@ -3676,11 +3710,41 @@ git push origin main
 
 ## Rollback
 
-If the migration lands but the app misbehaves, restore the pre-migration dump:
+If the migration lands but the app misbehaves, restore the pre-migration dump
+taken in Step 2 and verified in Step 2b.
+
+Stop the app first, so nothing is writing while objects are being dropped and
+recreated:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 "pm2 stop hqq-api hqq-web"
+```
+
+Then restore. `--clean --if-exists` drops each existing object before
+recreating it, which is what makes this work against the live, still-populated
+database; `--exit-on-error` stops at the first genuine failure instead of
+grinding on and leaving a half-restored database:
 
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "gunzip -c /root/hqq_oms-before-quotation-<date>.sql.gz | docker exec -i hqq_db psql -U hqq -d hqq_oms"
+  "docker exec -i hqq_db pg_restore --clean --if-exists --no-owner --exit-on-error -U hqq -d hqq_oms < /root/hqq_oms-before-quotation-<date>.dump"
 ```
 
-then check out the previous commit, rebuild, and `pm2 restart hqq-api hqq-web`. The migration is not reversible by `prisma migrate` alone: the `NEW` → `CONFIRMED` backfill has no down script, and rolling back the code without the data leaves every order at a status the old flow does not recognise.
+Verify the data is back where it was before continuing:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT status, count(*) FROM orders GROUP BY status ORDER BY 2 DESC;\" -c \"SELECT to_regclass('order_quotations') AS quotations;\""
+```
+
+Expected: the pre-migration status distribution is back (`NEW` present again if
+it was, no `QUOTATION`/`REJECTED`), and `quotations` is null.
+
+Then check out the previous commit, rebuild, and `pm2 restart hqq-api hqq-web`.
+
+If for any reason the dump was taken in **plain** format instead, it must have
+been taken with `--clean --if-exists` (`pg_dump -U hqq --clean --if-exists
+hqq_oms | gzip > …`) to be restorable this way, and must then be replayed with
+`psql -v ON_ERROR_STOP=1` so a failure halts rather than compounding. A plain
+dump taken without those flags is **not** a usable rollback — do not attempt to
+replay one into the live database. The migration is not reversible by `prisma migrate` alone: the `NEW` → `CONFIRMED` backfill has no down script, and rolling back the code without the data leaves every order at a status the old flow does not recognise.
