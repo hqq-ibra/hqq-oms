@@ -498,8 +498,16 @@ export class OrdersService {
       const raw = dto.expectedDeliveryDate as unknown;
       if (raw === null) {
         updateData.expectedDeliveryDate = null;
+      } else if (typeof raw !== 'string' && !(raw instanceof Date)) {
+        // `new Date(x)` coerces non-string primitives instead of rejecting
+        // them: `true` becomes 1970-01-01T00:00:00.001Z, `0` becomes the
+        // epoch, `[2026]` becomes the year 2026. Only a string (the wire
+        // format) or an already-real Date is a legitimate input here.
+        throw new BadRequestException(
+          'expectedDeliveryDate must be a valid date or null',
+        );
       } else {
-        const parsed = new Date(raw as string);
+        const parsed = new Date(raw);
         if (Number.isNaN(parsed.getTime())) {
           throw new BadRequestException(
             'expectedDeliveryDate must be a valid date or null',

@@ -1172,4 +1172,45 @@ describe('OrdersService.update — mass-assignment allow-list', () => {
     ).rejects.toThrow(BadRequestException);
     expect(prisma.order.update).not.toHaveBeenCalled();
   });
+
+  it('rejects an entirely empty body', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    await expect(service.update('o1', {} as any, 'u1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a boolean or numeric expectedDeliveryDate instead of coercing it', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const { service } = createService(prisma);
+
+    // new Date(x) silently coerces these instead of failing: `true` becomes
+    // 1970-01-01T00:00:00.001Z and `0` becomes the epoch. Only a string (the
+    // wire format) or an already-real Date is legitimate input.
+    await expect(
+      service.update('o1', { expectedDeliveryDate: true } as any, 'u1'),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.update('o1', { expectedDeliveryDate: 0 } as any, 'u1'),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('emits order.updated over the websocket on a successful update', async () => {
+    const prisma = createPrismaMock();
+    mockExistingOrder(prisma);
+    const updated = { id: 'o1', internalNotes: 'ok' };
+    prisma.order.update.mockResolvedValue(updated);
+    const { service, ws } = createService(prisma);
+
+    const result = await service.update('o1', { internalNotes: 'ok' } as any, 'u1');
+
+    expect(ws.emit).toHaveBeenCalledWith('order.updated', updated);
+    expect(result).toBe(updated);
+  });
 });
