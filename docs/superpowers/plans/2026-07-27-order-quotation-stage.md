@@ -3584,12 +3584,14 @@ Take the dump in **custom format** (`-Fc`). A plain-SQL dump taken without
 `ON_ERROR_STOP` by default so it keeps going, and the `COPY` blocks then
 either duplicate rows or die on primary-key conflicts — leaving the database
 in a worse state than the failure being rolled back from. Custom format
-restores through `pg_restore --clean --if-exists`, which drops each object
-before recreating it.
+restores through `pg_restore`, and `-C` records the `CREATE DATABASE` entry in
+the archive so the rollback can drop and recreate the whole database rather
+than trying to drop objects one by one — see the rollback section for why that
+distinction decides whether the rollback works at all.
 
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "docker exec hqq_db pg_dump -U hqq -Fc hqq_oms > /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && ls -lh /root/hqq_oms-before-quotation-*.dump"
+  "docker exec hqq_db pg_dump -U hqq -Fc -C hqq_oms > /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && ls -lh /root/hqq_oms-before-quotation-*.dump"
 ```
 
 Confirm the file is non-trivial in size before continuing.
@@ -3611,8 +3613,36 @@ ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
 
 The two rows must match exactly. `pg_restore` may print warnings about roles or
 extensions it could not recreate in the scratch database — those are fine; a
-non-zero exit or a mismatched count is not. Then drop the scratch database so
-it cannot be mistaken for the live one:
+non-zero exit or a mismatched count is not.
+
+**Then demonstrate why the rollback uses `--create`,** on the scratch database,
+where it costs nothing. Apply the migration to the scratch copy and try the
+naive `--clean --if-exists` restore against it:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec -i hqq_db psql -U hqq -d hqq_oms_restorecheck -v ON_ERROR_STOP=1 < /opt/hqq-oms/prisma/migrations/20260727000000_order_quotation_stage/migration.sql && \
+   docker exec hqq_db psql -U hqq -d hqq_oms_restorecheck -c \"SELECT to_regclass('order_quotations') AS after_migration;\" && \
+   docker exec -i hqq_db pg_restore --clean --if-exists --no-owner --exit-on-error -U hqq -d hqq_oms_restorecheck < /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump ; echo \"naive restore exit: \$?\""
+```
+
+Expect it to **fail**, with `cannot drop table orders because other objects
+depend on it — constraint order_quotations_order_id_fkey`. That is the whole
+reason the rollback section uses `--clean --create` against the `postgres`
+maintenance database instead: `--create` drops and recreates the entire
+database from the archive, so an object the archive has never heard of cannot
+block it. A non-zero exit here is the expected, correct result — it confirms
+the hazard is real and that the rollback command avoids it structurally.
+
+Verify the recreate path itself works by checking the archive carries its own
+`CREATE DATABASE` entry, which is what `--create` replays:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db pg_restore --list /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump | grep -i 'DATABASE' | head -5"
+```
+
+Then drop the scratch database so it cannot be mistaken for the live one:
 
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
@@ -3720,15 +3750,29 @@ recreated:
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 "pm2 stop hqq-api hqq-web"
 ```
 
-Then restore. `--clean --if-exists` drops each existing object before
-recreating it, which is what makes this work against the live, still-populated
-database; `--exit-on-error` stops at the first genuine failure instead of
-grinding on and leaving a half-restored database:
+Then restore — with `--clean --create`, targeting the `postgres` maintenance
+database, **not** `--clean --if-exists` against `hqq_oms`.
+
+This distinction is the whole rollback. `--clean` only drops objects that are
+**in the archive**, and the archive is the *pre-migration* dump — it has no
+`order_quotations`. That table's `order_quotations_order_id_fkey` (created by
+`migration.sql:54`) therefore survives the drop pass and makes
+`DROP TABLE public.orders` fail, because `pg_restore` never emits `CASCADE`.
+Since all drops run in one reverse-TOC pass before any create, `--exit-on-error`
+would abort *after* `order_items`, `customers` and `products` had already been
+dropped and *before* anything was restored — destroying the database in the one
+state this command will ever run in. `--create` sidesteps it entirely by
+dropping and recreating the whole database from the archive:
 
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "docker exec -i hqq_db pg_restore --clean --if-exists --no-owner --exit-on-error -U hqq -d hqq_oms < /root/hqq_oms-before-quotation-<date>.dump"
+  "docker exec hqq_db psql -U hqq -d postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='hqq_oms' AND pid <> pg_backend_pid();\" && \
+   docker exec -i hqq_db pg_restore --clean --create --no-owner --exit-on-error -U hqq -d postgres < /root/hqq_oms-before-quotation-<date>.dump"
 ```
+
+`pm2 stop` above already ended the app's connections; the
+`pg_terminate_backend` call clears any stray session (a psql left open in
+another window) that would otherwise make `DROP DATABASE` fail.
 
 Verify the data is back where it was before continuing:
 
