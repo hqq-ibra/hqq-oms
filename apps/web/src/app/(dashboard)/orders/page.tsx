@@ -205,7 +205,19 @@ export default function OrdersPage() {
           <button
             key={t}
             type="button"
-            onClick={() => { setTab(t); setPage(1); }}
+            onClick={() => {
+              setTab(t);
+              setPage(1);
+              // The delivery-date filters are meaningless for quotations — a
+              // quotation is not late, it is unanswered — and the API now
+              // excludes QUOTATION from them (orders.service.ts
+              // DELIVERY_EXCLUDED_STATUSES), so leaving one ticked here would
+              // silently produce an always-empty list.
+              if (t === 'QUOTATIONS') {
+                setDelayed(false);
+                setNearDeadline(false);
+              }
+            }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
               tab === t
                 ? 'border-[#DC2626] text-[#DC2626]'
@@ -249,28 +261,41 @@ export default function OrdersPage() {
               placeholder="Search orders..."
             />
           </div>
+          {/* Disabled on the Quotations tab for the same reason the Status
+              select is: a quotation has no delivery commitment to be late
+              against. */}
           <div className="flex flex-col justify-end gap-2 sm:flex-row sm:items-end">
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <label
+              className={`flex items-center gap-2 text-sm ${
+                tab === 'QUOTATIONS' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={delayed}
+                disabled={tab === 'QUOTATIONS'}
                 onChange={(e) => {
                   setDelayed(e.target.checked);
                   setPage(1);
                 }}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
               />
               Delayed
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <label
+              className={`flex items-center gap-2 text-sm ${
+                tab === 'QUOTATIONS' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={nearDeadline}
+                disabled={tab === 'QUOTATIONS'}
                 onChange={(e) => {
                   setNearDeadline(e.target.checked);
                   setPage(1);
                 }}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
               />
               Near deadline
             </label>

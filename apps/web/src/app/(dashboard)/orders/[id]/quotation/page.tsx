@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -230,10 +230,23 @@ export default function QuotationPage() {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
 
+  const fetchQuotation = useCallback(
+    () => api.get<QuotationView>(`/api/v1/orders/${id}/quotation`),
+    [id],
+  );
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['quotation', id],
-    queryFn: () => api.get<QuotationView>(`/api/v1/orders/${id}/quotation`),
+    queryFn: fetchQuotation,
     enabled: !!id,
+    // Belt and braces alongside the reseed guard below. The provider's
+    // defaults (providers/query-provider.tsx) leave refetchOnWindowFocus at
+    // its default `true`, so once the 60s staleTime lapses — trivial while
+    // pricing a multi-line quote — alt-tabbing away and back would refetch
+    // and hand this page a new `data` object mid-edit. This page is an
+    // editor, not a dashboard: nothing good comes of it refetching under the
+    // user's cursor.
+    refetchOnWindowFocus: false,
   });
 
   const [draft, setDraft] = useState<QuotationView | null>(null);
@@ -251,16 +264,9 @@ export default function QuotationPage() {
   // false, and only overlays the local, instant recompute while it is true —
   // see displayTotals below.
   const [hasUnsavedEdit, setHasUnsavedEdit] = useState(false);
-
-  // Seed (and reseed) the local draft whenever the server data changes.
-  // `totals` always comes along with it — we never locally patch that field,
-  // so it is implicitly always the server's own reconciled value.
-  useEffect(() => {
-    if (data) {
-      setDraft(data);
-      setLang(data.language === 'en' ? 'en' : 'ar');
-    }
-  }, [data]);
+  // The last server payload the reseed effect has already made a decision
+  // about — see that effect for why "decided" and not "applied".
+  const seenDataRef = useRef<QuotationView | null>(null);
 
   const locked = draft?.status !== OrderStatus.QUOTATION;
 
@@ -269,6 +275,13 @@ export default function QuotationPage() {
       api.patch<QuotationView>(`/api/v1/orders/${id}/quotation`, payload),
     onSuccess: (response) => {
       setDraft(response);
+      // The PATCH response *is* the newest server truth, so it belongs in the
+      // query cache too. Without this the cache keeps whatever the last GET
+      // returned, and any later consumer of `data` — including the reseed
+      // effect below — would be working from a snapshot that predates this
+      // save.
+      queryClient.setQueryData(['quotation', id], response);
+      seenDataRef.current = response;
       // Only a *successful* round trip may hand money display back to the
       // server's numbers — see hasUnsavedEdit's declaration and the note
       // above save() below. A failed save leaves this true, deliberately.
@@ -278,16 +291,97 @@ export default function QuotationPage() {
     onError: (err: Error) => addToast(err.message, 'error'),
   });
 
+  // Seed (and reseed) the local draft from the server — but *only* when there
+  // is nothing unsaved to destroy.
+  //
+  // Ungated, this ran on every new `data` object, and any refetch produces
+  // one. That silently discarded everything typed since the last successful
+  // save, mid-keystroke, with no warning. It also defeated the guarantee
+  // hasUnsavedEdit exists to provide: that flag keeps the displayed *totals*
+  // consistent with the visible inputs after a failed save, which is worth
+  // nothing if the inputs themselves get overwritten underneath it.
+  //
+  // Both flags are needed: hasUnsavedEdit covers the debounce window and any
+  // failed save that has not been superseded, and isPending covers the gap
+  // between dispatch and the response landing. addLine / removeLine do not
+  // rely on this effect at all — they reseed explicitly, see below.
+  //
+  // seenDataRef is what makes the gate safe rather than merely delayed. The
+  // flags are in the dependency array, so the effect re-runs when they flip —
+  // and without the ref, the run triggered by hasUnsavedEdit going false at
+  // the end of a *successful* save would re-apply the still-stale cached
+  // `data`, wiping the save's own response. (Observed: server at 575, UI
+  // snapped back to 230.) So each payload is consumed exactly once, at the
+  // moment it arrives: applied if nothing is unsaved, otherwise dropped for
+  // good. A payload that showed up mid-edit is stale by definition and must
+  // never be resurrected later.
+  //
+  // `totals` always comes along with the server payload — we never locally
+  // patch that field, so it is implicitly always the server's own reconciled
+  // value.
+  useEffect(() => {
+    if (!data || data === seenDataRef.current) return;
+    seenDataRef.current = data;
+    if (hasUnsavedEdit || patchMutation.isPending) return;
+    setDraft(data);
+    setLang(data.language === 'en' ? 'en' : 'ar');
+  }, [data, hasUnsavedEdit, patchMutation.isPending]);
+
+  // Adding or removing a line is a structural change, so afterwards the draft
+  // *must* be replaced by the server's answer — but the reseed effect above
+  // deliberately refuses to overwrite an unsaved edit, and hasUnsavedEdit can
+  // legitimately still be armed here (a failed save leaves it engaged by
+  // design). So these two mutations do their own reseed rather than relying
+  // on an invalidation to reach the effect.
+  //
+  // staleTime: 0 is load-bearing — the provider's 60s default would let
+  // fetchQuery return the pre-change cache and the new line would never
+  // appear.
+  const reseedFromServer = async () => {
+    const fresh = await queryClient.fetchQuery({
+      queryKey: ['quotation', id],
+      queryFn: fetchQuotation,
+      staleTime: 0,
+    });
+    seenDataRef.current = fresh;
+    setDraft(fresh);
+    setLang(fresh.language === 'en' ? 'en' : 'ar');
+    setHasUnsavedEdit(false);
+    queryClient.invalidateQueries({ queryKey: ['order', id] });
+  };
+
+  // Any debounced edit still sitting in pendingRef has to land before a
+  // structural change, or the reseed that follows would throw it away.
+  // If the flush itself fails this rejects, so the add/remove is abandoned
+  // and the unsaved edit is preserved rather than silently discarded — at the
+  // cost of two toasts (the patch's and the caller's) for the one failure.
+  const flushPending = async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const payload = pendingRef.current;
+    pendingRef.current = {};
+    if (Object.keys(payload).length > 0) {
+      await patchMutation.mutateAsync(payload);
+    }
+  };
+
   const addLine = useMutation({
-    mutationFn: (productId: string) =>
-      api.post(`/api/v1/orders/${id}/items`, { productId, quantity: 1 }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quotation', id] }),
+    mutationFn: async (productId: string) => {
+      await flushPending();
+      return api.post(`/api/v1/orders/${id}/items`, { productId, quantity: 1 });
+    },
+    onSuccess: reseedFromServer,
     onError: (err: Error) => addToast(err.message, 'error'),
   });
 
   const removeLine = useMutation({
-    mutationFn: (itemId: string) => api.delete(`/api/v1/orders/${id}/items/${itemId}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quotation', id] }),
+    mutationFn: async (itemId: string) => {
+      await flushPending();
+      return api.delete(`/api/v1/orders/${id}/items/${itemId}`);
+    },
+    onSuccess: reseedFromServer,
     onError: (err: Error) => addToast(err.message, 'error'),
   });
 
@@ -395,7 +489,38 @@ export default function QuotationPage() {
     win.document.write(el.outerHTML);
     win.document.write('</body></html>');
     win.document.close();
-    setTimeout(() => win.print(), 600);
+
+    // This is a customer-facing document. A fixed 600ms timer fired whether or
+    // not the letterhead image and the remote font families had arrived, so on
+    // a cold cache the printout came out with no letterhead and fallback
+    // fonts. Wait for the real signals — the window's load event (images) and
+    // document.fonts.ready (webfonts) — and keep a timer only as a fallback so
+    // a font CDN that never answers cannot leave the user staring at a window
+    // that refuses to print.
+    const loaded = new Promise<void>((resolve) => {
+      if (win.document.readyState === 'complete') {
+        resolve();
+        return;
+      }
+      win.addEventListener('load', () => resolve(), { once: true });
+    });
+    const fontsReady = win.document.fonts
+      ? win.document.fonts.ready.then(() => undefined)
+      : Promise.resolve();
+    const fallback = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+
+    void Promise.race([
+      Promise.all([loaded, fontsReady]).then(() => undefined),
+      fallback,
+    ]).then(() => {
+      if (win.closed) return;
+      win.focus();
+      win.print();
+      // print() blocks on the print dialog, so by here the user has either
+      // printed or cancelled. Leaving the window open left an orphan blank
+      // tab behind after every print.
+      win.close();
+    });
   };
 
   const [addProductSearch, setAddProductSearch] = useState('');
