@@ -22,12 +22,18 @@ import { format } from 'date-fns';
 import { Plus } from 'lucide-react';
 import { OrderStatus, OrderType } from '@/lib/types';
 
+const daysSince = (iso: string) =>
+  Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+
 interface OrderRow {
   id: string;
-  orderNumber: string;
-  factoryOrderNumber: string;
+  orderNumber: string | null;
+  factoryOrderNumber: string | null;
+  quoteNumber: string | null;
   status: string;
   expectedDeliveryDate: string | null;
+  createdAt: string;
+  quotation?: { validUntil: string | null } | null;
   customer?: { name: string };
   product?: { nameEn: string } | null;
   assignedUser?: { name: string } | null;
@@ -67,13 +73,17 @@ export default function OrdersPage() {
   const [delayed, setDelayed] = useState(false);
   const [nearDeadline, setNearDeadline] = useState(false);
   const [page, setPage] = useState(1);
+  const [tab, setTab] = useState<'ALL' | 'QUOTATIONS'>('ALL');
+
+  const effectiveStatus = tab === 'QUOTATIONS' ? OrderStatus.QUOTATION : status;
 
   const filters = {
-    ...(status && { status }),
+    ...(effectiveStatus && { status: effectiveStatus }),
     ...(orderType && { orderType }),
     ...(search && { search }),
     ...(delayed && { delayed: 'true' }),
     ...(nearDeadline && { nearDeadline: 'true' }),
+    ...(tab === 'QUOTATIONS' && { sort: 'oldest' }),
     page: String(page),
     pageSize: '10',
   };
@@ -100,7 +110,11 @@ export default function OrdersPage() {
   const totalPages = data?.totalPages ?? 1;
 
   const columns: DataTableColumn<OrderRow>[] = [
-    { key: 'orderNumber', header: 'Order #' },
+    {
+      key: 'orderNumber',
+      header: 'Order #',
+      render: (row) => row.orderNumber ?? row.quoteNumber ?? '—',
+    },
     {
       key: 'customer',
       header: 'Customer',
@@ -140,6 +154,36 @@ export default function OrdersPage() {
     },
   ];
 
+  const quotationColumns: DataTableColumn<OrderRow>[] = [
+    {
+      key: 'createdAt',
+      header: 'Waiting',
+      render: (row) => {
+        const d = daysSince(row.createdAt);
+        return (
+          <span className={d >= 7 ? 'font-semibold text-[#DC2626]' : 'text-gray-700'}>
+            {d === 0 ? 'today' : `${d} ${d === 1 ? 'day' : 'days'}`}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'validUntil',
+      header: 'Valid until',
+      render: (row) => {
+        const v = row.quotation?.validUntil;
+        if (!v) return '—';
+        const expired = new Date(v).getTime() < Date.now();
+        return (
+          <span className={expired ? 'font-semibold text-[#DC2626]' : 'text-gray-700'}>
+            {format(new Date(v), 'MMM d, yyyy')}
+            {expired ? ' (expired)' : ''}
+          </span>
+        );
+      },
+    },
+  ];
+
   const handleRowClick = (row: OrderRow) => {
     router.push(`/orders/${row.id}`);
   };
@@ -156,6 +200,35 @@ export default function OrdersPage() {
         </Link>
       </div>
 
+      <div className="flex gap-1 border-b border-gray-200">
+        {(['ALL', 'QUOTATIONS'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => {
+              setTab(t);
+              setPage(1);
+              // The delivery-date filters are meaningless for quotations — a
+              // quotation is not late, it is unanswered — and the API now
+              // excludes QUOTATION from them (orders.service.ts
+              // DELIVERY_EXCLUDED_STATUSES), so leaving one ticked here would
+              // silently produce an always-empty list.
+              if (t === 'QUOTATIONS') {
+                setDelayed(false);
+                setNearDeadline(false);
+              }
+            }}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              tab === t
+                ? 'border-[#DC2626] text-[#DC2626]'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t === 'ALL' ? 'All Orders' : 'Quotations'}
+          </button>
+        ))}
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -163,6 +236,7 @@ export default function OrdersPage() {
             label="Status"
             options={STATUS_OPTIONS}
             value={status}
+            disabled={tab === 'QUOTATIONS'}
             onChange={(e) => {
               setStatus(e.target.value);
               setPage(1);
@@ -187,28 +261,41 @@ export default function OrdersPage() {
               placeholder="Search orders..."
             />
           </div>
+          {/* Disabled on the Quotations tab for the same reason the Status
+              select is: a quotation has no delivery commitment to be late
+              against. */}
           <div className="flex flex-col justify-end gap-2 sm:flex-row sm:items-end">
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <label
+              className={`flex items-center gap-2 text-sm ${
+                tab === 'QUOTATIONS' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={delayed}
+                disabled={tab === 'QUOTATIONS'}
                 onChange={(e) => {
                   setDelayed(e.target.checked);
                   setPage(1);
                 }}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
               />
               Delayed
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <label
+              className={`flex items-center gap-2 text-sm ${
+                tab === 'QUOTATIONS' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={nearDeadline}
+                disabled={tab === 'QUOTATIONS'}
                 onChange={(e) => {
                   setNearDeadline(e.target.checked);
                   setPage(1);
                 }}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
               />
               Near deadline
             </label>
@@ -219,7 +306,7 @@ export default function OrdersPage() {
       {/* Desktop: DataTable */}
       <div className="hidden md:block">
         <DataTable
-          columns={columns}
+          columns={tab === 'QUOTATIONS' ? [...columns, ...quotationColumns] : columns}
           data={orders}
           loading={isLoading}
           emptyMessage="No orders found"
@@ -255,7 +342,7 @@ export default function OrdersPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="font-medium text-gray-900">{order.orderNumber}</p>
+                  <p className="font-medium text-gray-900">{order.orderNumber ?? order.quoteNumber ?? '—'}</p>
                   <p className="text-sm text-gray-500">
                     {order.customer?.name ?? '—'}
                   </p>

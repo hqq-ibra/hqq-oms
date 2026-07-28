@@ -16,9 +16,17 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 - **`packages/shared` is dead code.** Nothing imports `@hqq/shared`. The workflow arrays are duplicated in `apps/api/src/orders/order-workflow.ts` and `apps/web/src/lib/types.ts` — **both must be edited together**. Update `packages/shared/src/*` too, for consistency only.
 - **`apps/web` has no test runner.** No jest, no vitest, no `test` script. Web tasks are verified by `npx tsc --noEmit` and by running the app — never write web test files.
 - **API tests:** `npm -w apps/api run test`. Config is `apps/api/jest.config.js` (`rootDir: 'src'`, `testRegex: '.*\.spec\.ts$'`), so specs live under `apps/api/src/**`.
-- **A green build does not prove type safety.** Lint is disabled and `tsc` has a **baseline of 6 pre-existing errors**. Record the baseline before you start (`npx tsc --noEmit -p apps/api/tsconfig.json`) and compare against it — do not chase pre-existing errors.
+- **A green build does not prove type safety** — lint is disabled, so run `tsc` explicitly. Measured on this branch at 2026-07-27, **both projects are at zero errors**:
+  - `npx tsc --noEmit -p apps/api/tsconfig.json` → 0
+  - `npx tsc --noEmit -p apps/web/tsconfig.json` → 0
+
+  Zero is the bar. Any `tsc` error you see is one you introduced.
+- **Baseline test suite:** `npm -w apps/api run test` → 6 suites, 28 tests, all passing. Never finish a task below that count.
 - **Prisma `DateTime`:** always pass real `Date` objects to Prisma writes, never ISO strings.
+- **Never run `prisma migrate dev` or `prisma db push` in this repo.** The schema grew under `db push`, so ~35 tables exist that no migration file created. All 9 migrations on disk are recorded as applied, but replaying them would not reproduce the database, and `migrate dev` treats that as drift and demands `migrate reset` — which destroys all data. Migrations here are produced with `prisma migrate diff` and recorded with `prisma migrate resolve --applied`. This is pre-existing and out of scope to fix.
 - **Currency is SAR only** for quotations.
+- **Mold placeholder:** a product with `requiresLineSpecs = true` carries its specs on the *line*, not the product, and may appear on several lines of one order. Key off that flag — never off the SKU string. The four required spec keys are exactly `machine`, `capacity`, `grams`, `pattern`, matching `Product.specs` (`products.service.ts:45-48`).
+- `OrderItem.drawingNumber` and `OrderItem.promotedProductId` are added by Task 4 but **used by nothing in this plan**. They exist so the mold-promotion feature needs no second migration against the live database. Do not build promotion behaviour here.
 - **Do not deploy** until Task 11. Production is a live business database.
 - Commit after every task. Branch: `feat/order-quotation-stage`.
 
@@ -33,6 +41,7 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 | `apps/api/src/orders/quotation-totals.ts` | Pure arithmetic: line totals, discount clamp, VAT, grand total. Authoritative. |
 | `apps/api/src/orders/quotation-defaults.ts` | Pure: builds the quote header defaults from a customer. |
 | `apps/api/src/orders/sequence.ts` | Pure: next `QT-`/`ORD-`/`FO-` number from the previous one. |
+| `apps/api/src/orders/mold-specs.ts` | Pure: required spec keys, incomplete-line detection, spec label rendering. |
 | `apps/api/src/orders/__tests__/order-workflow.spec.ts` | Transition rules. |
 | `apps/api/src/orders/__tests__/quotation-totals.spec.ts` | Totals arithmetic. |
 | `apps/api/src/orders/__tests__/sequence.spec.ts` | Number sequencing. |
@@ -46,7 +55,7 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 
 | File | Change |
 |---|---|
-| `prisma/schema.prisma` | `Order`, `OrderItem`, new `OrderQuotation` |
+| `prisma/schema.prisma` | `Order`, `OrderItem`, `Product`, new `OrderQuotation` |
 | `apps/api/src/orders/order-workflow.ts` | flows + `REJECTED` |
 | `apps/api/src/orders/orders.service.ts` | create, confirm, quotation get/patch |
 | `apps/api/src/orders/orders.controller.ts` | two new routes |
@@ -72,15 +81,16 @@ Spec: `docs/superpowers/specs/2026-07-27-order-quotation-stage-design.md`
 - Consumes: nothing
 - Produces: `isValidTransition(orderType: string, currentStatus: string, newStatus: string): boolean` — unchanged signature, new rules.
 
-- [ ] **Step 1: Create the branch and record the tsc baseline**
+- [ ] **Step 1: Confirm the baseline**
+
+The branch `feat/order-quotation-stage` already exists and is checked out.
 
 ```bash
-cd "C:/Users/Lenovo/Desktop/Claude App/hqq-oms"
-git checkout -b feat/order-quotation-stage
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
+npm -w apps/api run test 2>&1 | tail -6
 ```
 
-Write down the error count. It should be 6. Every later task compares against this number.
+Expected: **zero** `tsc` output, and 6 suites / 28 tests passing. If either differs, stop and report — something changed underneath this plan.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -443,11 +453,11 @@ git commit -m "feat(orders): add quotation totals calculation"
 
 ---
 
-## Task 3: Number sequencing and quote defaults
+## Task 3: Pure helpers — sequencing, quote defaults, mold specs
 
 **Files:**
-- Create: `apps/api/src/orders/sequence.ts`, `apps/api/src/orders/quotation-defaults.ts`
-- Test: `apps/api/src/orders/__tests__/sequence.spec.ts`
+- Create: `apps/api/src/orders/sequence.ts`, `apps/api/src/orders/quotation-defaults.ts`, `apps/api/src/orders/mold-specs.ts`
+- Test: `apps/api/src/orders/__tests__/sequence.spec.ts`, `apps/api/src/orders/__tests__/mold-specs.spec.ts`
 
 **Interfaces:**
 - Produces:
@@ -455,6 +465,11 @@ git commit -m "feat(orders): add quotation totals calculation"
   - `buildQuotationDefaults(input: QuotationDefaultsInput): QuotationDefaults`
   - `QuotationDefaultsInput = { customerName: string; customerCity: string | null; contactName: string | null; contactPhone: string | null; quoteDate: Date }`
   - `QuotationDefaults = { quoteDate: Date; validUntil: Date; clientBlock: string; contact: string | null; attn: string | null }`
+  - `REQUIRED_SPEC_KEYS: readonly ['machine', 'capacity', 'grams', 'pattern']`
+  - `MoldSpecs = { machine?: string; capacity?: string; grams?: string; pattern?: string }`
+  - `missingSpecKeys(specs: unknown): string[]`
+  - `findIncompleteSpecLines(lines: { index: number; requiresLineSpecs: boolean; specs: unknown }[]): { index: number; missing: string[] }[]`
+  - `formatSpecs(specs: unknown): string`
 
 `orders.service.ts` currently repeats this sequencing logic twice with `.replace(prefix, '')`, which corrupts the result when the prefix characters recur in the suffix. Extracting it fixes that and makes it testable.
 
@@ -628,11 +643,156 @@ npm -w apps/api run test -- sequence
 
 Expected: PASS, 10 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write the failing mold-spec test**
+
+Create `apps/api/src/orders/__tests__/mold-specs.spec.ts`:
+
+```ts
+import {
+  REQUIRED_SPEC_KEYS,
+  missingSpecKeys,
+  findIncompleteSpecLines,
+  formatSpecs,
+} from '../mold-specs';
+
+const full = { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' };
+
+describe('missingSpecKeys', () => {
+  it('returns nothing when all four are present', () => {
+    expect(missingSpecKeys(full)).toEqual([]);
+  });
+
+  it('lists every absent key', () => {
+    expect(missingSpecKeys({ machine: 'MV' }).sort()).toEqual(
+      ['capacity', 'grams', 'pattern'],
+    );
+  });
+
+  it('treats blank and whitespace-only values as missing', () => {
+    expect(missingSpecKeys({ ...full, pattern: '   ' })).toEqual(['pattern']);
+    expect(missingSpecKeys({ ...full, grams: '' })).toEqual(['grams']);
+  });
+
+  it('treats null and non-objects as everything missing', () => {
+    expect(missingSpecKeys(null).sort()).toEqual([...REQUIRED_SPEC_KEYS].sort());
+    expect(missingSpecKeys('nope').sort()).toEqual([...REQUIRED_SPEC_KEYS].sort());
+  });
+});
+
+describe('findIncompleteSpecLines', () => {
+  it('ignores lines that do not require specs', () => {
+    expect(
+      findIncompleteSpecLines([
+        { index: 0, requiresLineSpecs: false, specs: null },
+        { index: 1, requiresLineSpecs: false, specs: { machine: 'MV' } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('reports each incomplete mold line with its index and missing keys', () => {
+    const result = findIncompleteSpecLines([
+      { index: 0, requiresLineSpecs: true, specs: full },
+      { index: 1, requiresLineSpecs: true, specs: { machine: 'MV', capacity: '6K' } },
+      { index: 2, requiresLineSpecs: true, specs: null },
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result[0].index).toBe(1);
+    expect(result[0].missing.sort()).toEqual(['grams', 'pattern']);
+    expect(result[1].index).toBe(2);
+  });
+
+  it('returns nothing when every mold line is complete', () => {
+    expect(
+      findIncompleteSpecLines([{ index: 0, requiresLineSpecs: true, specs: full }]),
+    ).toEqual([]);
+  });
+});
+
+describe('formatSpecs', () => {
+  it('joins the four values in a fixed order', () => {
+    expect(formatSpecs(full)).toBe('MV · 6K · 250 · Rose');
+  });
+
+  it('skips absent values rather than leaving empty separators', () => {
+    expect(formatSpecs({ machine: 'MV', pattern: 'Rose' })).toBe('MV · Rose');
+  });
+
+  it('returns an empty string for no specs', () => {
+    expect(formatSpecs(null)).toBe('');
+    expect(formatSpecs({})).toBe('');
+  });
+});
+```
+
+- [ ] **Step 6: Run it and confirm it fails**
 
 ```bash
-git add apps/api/src/orders/sequence.ts apps/api/src/orders/quotation-defaults.ts apps/api/src/orders/__tests__/sequence.spec.ts
-git commit -m "feat(orders): extract number sequencing and quotation defaults"
+npm -w apps/api run test -- mold-specs
+```
+
+Expected: FAIL — `Cannot find module '../mold-specs'`.
+
+- [ ] **Step 7: Implement the mold-spec helpers**
+
+Create `apps/api/src/orders/mold-specs.ts`:
+
+```ts
+/**
+ * A placeholder product (Product.requiresLineSpecs) carries no fixed spec
+ * combination — each order line names its own mold. Keys match Product.specs
+ * so a promoted mold can copy them straight across later.
+ */
+export const REQUIRED_SPEC_KEYS = [
+  'machine',
+  'capacity',
+  'grams',
+  'pattern',
+] as const;
+
+export type SpecKey = (typeof REQUIRED_SPEC_KEYS)[number];
+
+export type MoldSpecs = Partial<Record<SpecKey, string>>;
+
+function readSpecs(specs: unknown): MoldSpecs {
+  if (!specs || typeof specs !== 'object' || Array.isArray(specs)) return {};
+  return specs as MoldSpecs;
+}
+
+export function missingSpecKeys(specs: unknown): string[] {
+  const s = readSpecs(specs);
+  return REQUIRED_SPEC_KEYS.filter((key) => !s[key] || !String(s[key]).trim());
+}
+
+export function findIncompleteSpecLines(
+  lines: { index: number; requiresLineSpecs: boolean; specs: unknown }[],
+): { index: number; missing: string[] }[] {
+  return lines
+    .filter((line) => line.requiresLineSpecs)
+    .map((line) => ({ index: line.index, missing: missingSpecKeys(line.specs) }))
+    .filter((line) => line.missing.length > 0);
+}
+
+export function formatSpecs(specs: unknown): string {
+  const s = readSpecs(specs);
+  return REQUIRED_SPEC_KEYS.map((key) => s[key])
+    .filter((value): value is string => Boolean(value && String(value).trim()))
+    .join(' · ');
+}
+```
+
+- [ ] **Step 8: Run the test again**
+
+```bash
+npm -w apps/api run test -- mold-specs
+```
+
+Expected: PASS, 10 tests.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add apps/api/src/orders/sequence.ts apps/api/src/orders/quotation-defaults.ts apps/api/src/orders/mold-specs.ts apps/api/src/orders/__tests__/sequence.spec.ts apps/api/src/orders/__tests__/mold-specs.spec.ts
+git commit -m "feat(orders): pure helpers for sequencing, quote defaults and mold specs"
 ```
 
 ---
@@ -644,7 +804,7 @@ git commit -m "feat(orders): extract number sequencing and quotation defaults"
 - Create: `prisma/migrations/<generated>_order_quotation_stage/migration.sql`
 
 **Interfaces:**
-- Produces: Prisma client types `Order.quoteNumber`, `Order.confirmedAt`, `Order.quotation`, `OrderItem.unitPrice | unitLabel | description | orderIndex`, `OrderQuotation`. Tasks 5–7 depend on these field names.
+- Produces: Prisma client types `Order.quoteNumber`, `Order.confirmedAt`, `Order.quotation`, `OrderItem.unitPrice | unitLabel | description | orderIndex | specs | drawingNumber | promotedProductId`, `Product.requiresLineSpecs`, `OrderQuotation`, and the seeded product `SIL-THF-NEWMOLD`. Tasks 5–11 depend on these names.
 
 **This task runs against your local dev database only.** Production is Task 11.
 
@@ -689,15 +849,39 @@ model OrderItem {
   unitLabel   String   @default("عدد") @map("unit_label")
   description String?
   orderIndex  Int      @default(0) @map("order_index")
+  specs       Json?
+  drawingNumber     String? @map("drawing_number")
+  promotedProductId String? @map("promoted_product_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
-  @@unique([orderId, productId])
+  @@index([orderId])
   @@map("order_items")
 }
 ```
+
+`@@unique([orderId, productId])` is **removed**: the mold placeholder appears once
+per design, so one order holds several lines of the same product. It is replaced
+by a plain index on `orderId`, which is what the queries actually need. Ordinary
+products still merge by quantity — that is enforced in `addItem` (Task 11), not by
+the database.
+
+`specs` holds `{ machine, capacity, grams, pattern }`. `drawingNumber` and
+`promotedProductId` are for the later mold-promotion feature and are written by
+nothing in this plan; they are here so production takes one migration, not two.
+
+- [ ] **Step 2b: Add the placeholder flag to `Product`**
+
+In the `Product` model, after the `inventory` line, add:
+
+```prisma
+  requiresLineSpecs Boolean  @default(false) @map("requires_line_specs")
+```
+
+A product with this flag carries its specs per order line rather than on the
+product. All code keys off this flag, never off the SKU.
 
 - [ ] **Step 3: Add the `OrderQuotation` model**
 
@@ -735,13 +919,30 @@ npx prisma validate --schema prisma/schema.prisma
 
 Expected: "The schema at prisma/schema.prisma is valid."
 
-- [ ] **Step 5: Generate the migration without applying it**
+- [ ] **Step 5: Generate the migration with `migrate diff`, not `migrate dev`**
+
+> **Do not run `prisma migrate dev`.** This project's schema grew for a long time
+> under `prisma db push`: the database holds ~35 tables (Projects, quotation
+> workspace, client approval, quote comparison) that no migration file ever
+> created. All 9 migrations on disk are recorded as applied, but replaying them
+> from scratch would not reproduce the database. `migrate dev` sees that as drift
+> and demands `migrate reset`, which destroys all local data. This is pre-existing
+> and is not yours to fix.
+>
+> `migrate diff` sidesteps it by diffing the **live database** against the
+> **target schema**, which yields exactly this task's delta and nothing else.
 
 ```bash
-npx prisma migrate dev --schema prisma/schema.prisma --name order_quotation_stage --create-only
+mkdir -p prisma/migrations/20260727000000_order_quotation_stage
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script > prisma/migrations/20260727000000_order_quotation_stage/migration.sql
+cat prisma/migrations/20260727000000_order_quotation_stage/migration.sql
 ```
 
-This writes `prisma/migrations/<timestamp>_order_quotation_stage/migration.sql` and stops.
+The timestamp `20260727000000` sorts after the last existing migration
+(`20260512000001_todo_person`), which is what `migrate deploy` needs.
 
 - [ ] **Step 6: Append the status backfill to the generated SQL**
 
@@ -754,29 +955,101 @@ UPDATE "order_status_history" SET "old_status" = 'CONFIRMED' WHERE "old_status" 
 UPDATE "order_status_history" SET "new_status" = 'CONFIRMED' WHERE "new_status" = 'NEW';
 ```
 
-Also confirm the generated SQL contains `DROP NOT NULL` for `order_number` and `factory_order_number`. If Prisma emitted `DROP COLUMN` / `ADD COLUMN` for either, replace that pair with:
+Then verify the generated SQL against this expected shape. It was produced from
+this exact database on 2026-07-27 and should match:
+
+- `DROP INDEX "order_items_order_id_product_id_key"` — the unique constraint going away
+- `ALTER TABLE "order_items" ADD COLUMN` for `description`, `drawing_number`, `order_index`, `promoted_product_id`, `specs`, `unit_label`, `unit_price`
+- `ALTER TABLE "orders" ADD COLUMN "confirmed_at"`, `ADD COLUMN "quote_number"`, and crucially **`ALTER COLUMN "order_number" DROP NOT NULL`** and the same for `factory_order_number`
+- `ALTER TABLE "orders" ALTER COLUMN "status" SET DEFAULT 'QUOTATION'`
+- `ALTER TABLE "products" ADD COLUMN "requires_line_specs"`
+- `CREATE TABLE "order_quotations"` with its unique index and foreign key
+- `CREATE INDEX "order_items_order_id_idx"`, `CREATE UNIQUE INDEX "orders_quote_number_key"`
+
+**If you see `DROP COLUMN` against `orders` or `order_items`, stop and report
+BLOCKED.** Dropping `order_number` or `factory_order_number` would destroy every
+existing order number in production. The expected output contains no `DROP
+COLUMN` at all — only the one `DROP INDEX` listed above.
+
+- [ ] **Step 6b: Create the mold placeholder product in the migration**
+
+Append to the same `migration.sql`. The product must exist before anyone can quote
+a mold, and seeding it here means dev and production get it identically.
 
 ```sql
-ALTER TABLE "orders" ALTER COLUMN "order_number" DROP NOT NULL;
-ALTER TABLE "orders" ALTER COLUMN "factory_order_number" DROP NOT NULL;
+-- The one catalogue entry standing in for a mold that does not exist yet.
+-- Its specs live on each order line, not here.
+INSERT INTO "products" (
+  "id", "sku", "name_en", "name_ar", "category_id", "subcategory_id",
+  "inventory", "is_active", "requires_line_specs", "created_at", "updated_at"
+)
+SELECT
+  'prod_new_mold_thf',
+  'SIL-THF-NEWMOLD',
+  'New Mold — Silicone Thermoforming',
+  'قالب جديد — سيليكون ثيرموفورمنج',
+  c."id",
+  s."id",
+  0, true, true, NOW(), NOW()
+FROM "product_categories" c
+LEFT JOIN "product_subcategories" s
+  ON s."category_id" = c."id" AND s."sku_code" = 'THF'
+WHERE c."sku_prefix" = 'SIL'
+LIMIT 1
+ON CONFLICT ("sku") DO NOTHING;
 ```
 
-Dropping those columns would destroy every existing order number.
+The column names above are verified against `prisma/schema.prisma:171-196`:
+`product_categories.sku_prefix`, `product_subcategories.sku_code`,
+`product_subcategories.category_id`. The dev database has category `cat_sil`
+(`skuPrefix: 'SIL'`) with subcategory `sub_sil_thf` (`skuCode: 'THF'`).
 
-- [ ] **Step 7: Apply it locally and verify**
+The statement selects the category by `sku_prefix` rather than hardcoding
+`cat_sil`, because production may have different generated IDs. After applying,
+verify a row came back:
 
 ```bash
-npx prisma migrate dev --schema prisma/schema.prisma
+node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.product.findUnique({where:{sku:'SIL-THF-NEWMOLD'}}).then(r=>{console.log(r);return p.\$disconnect()})"
+```
+
+Expected: a product with `requiresLineSpecs: true` and a non-null `categoryId`.
+If it prints `null`, the silicone category is missing — create it through the
+Products UI, then re-run the INSERT.
+
+- [ ] **Step 7: Apply it locally and record it as applied**
+
+Again, **not** `migrate dev`. Execute the file directly, then tell Prisma's
+migration history it has been applied, so `migrate deploy` will not try to
+re-run it later:
+
+```bash
+npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260727000000_order_quotation_stage/migration.sql
+npx prisma migrate resolve --schema prisma/schema.prisma --applied 20260727000000_order_quotation_stage
 npx prisma generate --schema prisma/schema.prisma
 ```
 
-Then check no `NEW` rows survive:
+If `db execute` fails partway, the migration is half-applied — report BLOCKED with
+the exact error and the statement it failed on. Do **not** re-run the file from
+the top; re-running `ADD COLUMN` will error on the columns that already landed.
+
+Then verify the data with a real query:
 
 ```bash
-npx prisma studio --schema prisma/schema.prisma
+node -e "
+const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();
+(async()=>{
+  const byStatus=await p.order.groupBy({by:['status'],_count:true});
+  console.log('orders by status:',JSON.stringify(byStatus));
+  const stale=await p.orderStatusHistory.count({where:{OR:[{oldStatus:'NEW'},{newStatus:'NEW'}]}});
+  console.log('stale NEW history rows:',stale);
+  console.log('placeholder:',await p.product.findUnique({where:{sku:'SIL-THF-NEWMOLD'},select:{id:true,nameEn:true,requiresLineSpecs:true,categoryId:true,subcategoryId:true}}));
+  await p.\$disconnect();
+})()"
 ```
 
-Filter `orders` by `status = NEW`. Expected: zero rows.
+Expected: **no `NEW` bucket** in the status counts, `stale NEW history rows: 0`,
+and a placeholder product with `requiresLineSpecs: true` and non-null category
+and subcategory ids. Paste this output into your report.
 
 - [ ] **Step 8: Commit**
 
@@ -827,6 +1100,10 @@ function createPrismaMock() {
   mock.$transaction = jest.fn((arg: unknown) =>
     Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(mock),
   );
+  // Tagged-template call: invoked as mock.$executeRaw`...${a}...${b}`, so each
+  // recorded call is [stringsArray, ...substitutions]. Added for Task 6's
+  // atomic stock decrement — see that task's fix-round note.
+  mock.$executeRaw = jest.fn().mockResolvedValue(1);
   return mock;
 }
 
@@ -929,6 +1206,60 @@ describe('OrdersService.create', () => {
     expect(line.orderIndex).toBe(0);
   });
 
+  it('stores per-line mold specs and allows the same product on several lines', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    prisma.order.create.mockImplementation(({ data }: { data: any }) =>
+      Promise.resolve({ id: 'o1', ...data }),
+    );
+    const { service } = createService(prisma);
+
+    await service.create(
+      {
+        orderType: 'NEW_MOLD',
+        customerId: 'c1',
+        items: [
+          { productId: 'mold', quantity: 1, unitPrice: 900, specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' } },
+          { productId: 'mold', quantity: 1, unitPrice: 950, specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' } },
+        ],
+      },
+      'u1',
+    );
+
+    const lines = (prisma.order.create as Mock).mock.calls[0][0].data.items.create;
+    expect(lines).toHaveLength(2);
+    expect(lines[0].specs).toEqual({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' });
+    expect(lines[1].specs.pattern).toBe('Star');
+    expect(lines[0].orderIndex).toBe(0);
+    expect(lines[1].orderIndex).toBe(1);
+  });
+
+  it('refuses a non-positive quantity or a negative price', async () => {
+    const prisma = createPrismaMock();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c1', customerCode: 'ACME', name: 'Acme', city: null, contacts: [],
+    });
+    const { service } = createService(prisma);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 0, unitPrice: 5 }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/at least 1/i);
+
+    await expect(
+      service.create(
+        { orderType: 'REPEAT', customerId: 'c1', items: [{ productId: 'p1', quantity: 1, unitPrice: -5 }] },
+        'u1',
+      ),
+    ).rejects.toThrow(/negative/i);
+
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
   it('seeds the quotation header from the customer', async () => {
     const prisma = createPrismaMock();
     prisma.customer.findUnique.mockResolvedValue({
@@ -1024,6 +1355,7 @@ Replace the whole `create` method (lines 153–226) with:
         unitPrice?: number;
         unitLabel?: string;
         description?: string;
+        specs?: Record<string, string> | null;
       }[];
       expectedDeliveryDate?: string;
       assignedUserId?: string | null;
@@ -1033,6 +1365,18 @@ Replace the whole `create` method (lines 153–226) with:
   ) {
     if (!dto.items?.length) {
       throw new BadRequestException('At least one item is required');
+    }
+
+    // Money guard: computeQuotationTotals multiplies these straight through, so
+    // a negative slipping in would print a negative line on a customer quotation
+    // and be written to the order's selling price.
+    for (const item of dto.items) {
+      if (!Number.isFinite(item.quantity) || item.quantity < 1) {
+        throw new BadRequestException('Quantity must be at least 1');
+      }
+      if (item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice < 0) {
+        throw new BadRequestException('Unit price cannot be negative');
+      }
     }
 
     const customer = await this.prisma.customer.findUnique({
@@ -1072,6 +1416,7 @@ Replace the whole `create` method (lines 153–226) with:
             ...(item.unitLabel ? { unitLabel: item.unitLabel } : {}),
             description: item.description ?? null,
             orderIndex: index,
+            ...(item.specs ? { specs: item.specs } : {}),
           })),
         },
         quotation: {
@@ -1133,7 +1478,7 @@ Expected: PASS, 4 tests.
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
 ```
 
-Expected: the same 6 errors you recorded in Task 1, no more.
+Expected: no output at all. Zero errors is the bar.
 
 - [ ] **Step 8: Commit**
 
@@ -1151,8 +1496,29 @@ git commit -m "feat(orders): create orders as unconfirmed quotations"
 - Test: `apps/api/src/orders/__tests__/orders.service.spec.ts` (append)
 
 **Interfaces:**
-- Consumes: `computeQuotationTotals` (Task 2), `nextSequenceNumber` (Task 3)
-- Produces: `changeStatus` unchanged signature; on `CONFIRMED` it assigns numbers, sets `confirmedAt`, decrements stock and upserts the `SELLING_PRICE` cost.
+- Consumes: `computeQuotationTotals` (Task 2), `nextSequenceNumber` and `findIncompleteSpecLines` (Task 3)
+- Produces: `changeStatus` unchanged signature; on `CONFIRMED` it validates mold specs, assigns numbers, sets `confirmedAt`, decrements stock and upserts the `SELLING_PRICE` cost.
+
+> **Post-implementation correction (fix round 1 code review):** the stock
+> decrement below was originally written as `tx.product.findUnique` (read
+> `inventory`) → `Math.min(item.quantity, inventory)` in JS → a relative
+> Prisma `decrement`. That has a TOCTOU race: two concurrent `CONFIRMED`
+> transactions touching the same product can each read the same
+> pre-decrement value, each independently clamp against it, and both apply
+> their own relative decrement — driving `inventory` negative despite the
+> clamp, because the database never re-checks the value at write time.
+> `Product.inventory` has no DB `CHECK` constraint, so nothing else stops it.
+> The code and tests below are corrected to use a single atomic
+> `tx.$executeRaw` statement with `GREATEST(inventory - N, 0)`, which clamps
+> and writes in one server-side operation with no read-then-write window.
+> Step 1 and Step 3 below show the corrected version; do not implement the
+> read-then-clamp version described in earlier drafts of this plan.
+
+Add `findIncompleteSpecLines` to the imports at the top of `orders.service.ts`:
+
+```ts
+import { findIncompleteSpecLines } from './mold-specs';
+```
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1169,7 +1535,14 @@ function quotationOrder(overrides: Record<string, unknown> = {}) {
     factoryOrderNumber: null,
     customer: { id: 'c1', customerCode: 'ACME', name: 'Acme' },
     items: [
-      { id: 'i1', productId: 'p1', quantity: 2, unitPrice: 100 },
+      {
+        id: 'i1',
+        productId: 'p1',
+        quantity: 2,
+        unitPrice: 100,
+        specs: null,
+        product: { nameEn: 'Tray 500g', requiresLineSpecs: false },
+      },
     ],
     quotation: {
       discountAmount: 0,
@@ -1180,6 +1553,15 @@ function quotationOrder(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const moldLine = (specs: unknown, id = 'm1') => ({
+  id,
+  productId: 'mold',
+  quantity: 1,
+  unitPrice: 900,
+  specs,
+  product: { nameEn: 'New Mold — Silicone Thermoforming', requiresLineSpecs: true },
+});
+
 describe('OrdersService.changeStatus — confirming', () => {
   function setup(order = quotationOrder()) {
     const prisma = createPrismaMock();
@@ -1187,7 +1569,6 @@ describe('OrdersService.changeStatus — confirming', () => {
     prisma.order.update.mockImplementation(({ data }: { data: any }) =>
       Promise.resolve({ ...order, ...data }),
     );
-    prisma.product.findUnique.mockResolvedValue({ inventory: 10 });
     return { prisma, ...createService(prisma) };
   }
 
@@ -1202,28 +1583,38 @@ describe('OrdersService.changeStatus — confirming', () => {
     expect(data.confirmedAt).toBeInstanceOf(Date);
   });
 
-  it('decrements stock only once the customer commits', async () => {
+  it('decrements stock only once the customer commits, via one atomic statement per line', async () => {
     const { prisma, service } = setup();
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'p1' },
-        data: { inventory: { decrement: 2 } },
-      }),
+    // The decrement-and-floor happens in a single UPDATE (see below), not a
+    // read followed by a separate write, so there is no gap for a concurrent
+    // confirmation to read a stale value.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, quantity, productId] = (prisma.$executeRaw as Mock).mock.calls[0];
+    expect(Array.isArray(sql) ? sql.join('') : String(sql)).toContain(
+      'UPDATE products SET inventory = GREATEST(inventory -',
     );
+    expect(quantity).toBe(2);
+    expect(productId).toBe('p1');
   });
 
-  it('never drives inventory negative', async () => {
+  it('floors the decrement at zero inside the SQL statement itself', async () => {
+    // This only proves the statement text asks the database to floor the
+    // result at zero (`GREATEST(inventory - N, 0)`) — a mock cannot exercise
+    // concurrent transactions, so it cannot prove the invariant holds under
+    // real concurrent load. That guarantee now comes from the single UPDATE
+    // being one atomic, row-locking statement, not from anything assertable
+    // here.
     const { prisma, service } = setup();
-    prisma.product.findUnique.mockResolvedValue({ inventory: 1 });
 
     await service.changeStatus('o1', 'CONFIRMED', 'u1');
 
-    expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { inventory: { decrement: 1 } } }),
-    );
+    const [sql] = (prisma.$executeRaw as Mock).mock.calls[0];
+    const text = Array.isArray(sql) ? sql.join('') : String(sql);
+    expect(text).toContain('GREATEST(inventory -');
+    expect(text).toContain(', 0)');
   });
 
   it('records the quote grand total as the selling price', async () => {
@@ -1272,8 +1663,52 @@ describe('OrdersService.changeStatus — confirming', () => {
 
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
     expect(prisma.orderCost.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to confirm a mold line that is missing specs', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine({ machine: 'MV', capacity: '6K' })] }),
+    );
+
+    await expect(service.changeStatus('o1', 'CONFIRMED', 'u1')).rejects.toThrow(
+      /grams/,
+    );
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('confirms a mold line once all four specs are set', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({
+        items: [moldLine({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' })],
+      }),
+    );
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.orderNumber).toMatch(
+      /^ORD-\d{4}-0001$/,
+    );
+  });
+
+  it('does not demand specs from ordinary products', async () => {
+    const { prisma, service } = setup();
+
+    await service.changeStatus('o1', 'CONFIRMED', 'u1');
+
+    expect(prisma.order.update).toHaveBeenCalled();
+  });
+
+  it('lets an incomplete mold quotation still be rejected', async () => {
+    const { prisma, service } = setup(
+      quotationOrder({ items: [moldLine(null)] }),
+    );
+
+    await service.changeStatus('o1', 'REJECTED', 'u1');
+
+    expect((prisma.order.update as Mock).mock.calls[0][0].data.status).toBe('REJECTED');
   });
 
   it('rejects a quotation without assigning anything', async () => {
@@ -1284,7 +1719,7 @@ describe('OrdersService.changeStatus — confirming', () => {
     const data = (prisma.order.update as Mock).mock.calls[0][0].data;
     expect(data.status).toBe('REJECTED');
     expect(data.orderNumber).toBeUndefined();
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 });
 ```
@@ -1315,7 +1750,12 @@ Replace the whole `changeStatus` method with:
         product: true,
         factory: true,
         assignedUser: true,
-        items: true,
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            product: { select: { nameEn: true, requiresLineSpecs: true } },
+          },
+        },
         quotation: true,
       },
     });
@@ -1328,6 +1768,26 @@ Replace the whole `changeStatus` method with:
     }
 
     const isConfirming = newStatus === 'CONFIRMED';
+
+    // A mold cannot be cut without all four specs. Quotations may be saved
+    // incomplete while pricing; confirmation is where it has to be complete.
+    if (isConfirming) {
+      const incomplete = findIncompleteSpecLines(
+        order.items.map((item, index) => ({
+          index,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: item.specs,
+        })),
+      );
+      if (incomplete.length > 0) {
+        const detail = incomplete
+          .map((l) => `line ${l.index + 1} (missing ${l.missing.join(', ')})`)
+          .join('; ');
+        throw new BadRequestException(
+          `Cannot confirm: mold specifications are incomplete — ${detail}`,
+        );
+      }
+    }
 
     // Everything a quotation deliberately deferred happens here, and only here.
     const confirmationData: Record<string, unknown> = {};
@@ -1383,19 +1843,16 @@ Replace the whole `changeStatus` method with:
       });
 
       if (isConfirming) {
+        // A read-then-clamp-then-relative-decrement would race: two
+        // concurrent confirmations touching the same product could both read
+        // the same starting inventory, each clamp against it, and both apply
+        // their own decrement — driving the column negative despite the
+        // clamp, since Postgres never re-checks the value at write time. A
+        // single UPDATE that both reads and clamps server-side has no such
+        // window: the row lock taken for the write serializes concurrent
+        // updates to the same product.
         for (const item of order.items) {
-          const product = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { inventory: true },
-          });
-          if (product && product.inventory > 0) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: {
-                inventory: { decrement: Math.min(item.quantity, product.inventory) },
-              },
-            });
-          }
+          await tx.$executeRaw`UPDATE products SET inventory = GREATEST(inventory - ${item.quantity}, 0) WHERE id = ${item.productId}`;
         }
 
         // Revenue in Reports and Analytics is the SELLING_PRICE cost row
@@ -1471,9 +1928,29 @@ git commit -m "feat(orders): confirmation assigns numbers, moves stock, records 
 - Produces:
   - `GET /api/v1/orders/:id/quotation` → `QuotationView`
   - `PATCH /api/v1/orders/:id/quotation` → `QuotationView`
-  - `QuotationView = { orderId, quoteNumber, orderNumber, status, quoteDate, validUntil, payMethod, clientBlock, contact, attn, notes, discountAmount, vatEnabled, vatPercent, language, customerName, lines: { id, description, quantity, unitLabel, unitPrice, lineTotal }[], totals: QuotationTotals }`
+  - `QuotationView = { orderId, quoteNumber, orderNumber, status, quoteDate, validUntil, payMethod, clientBlock, contact, attn, notes, discountAmount, vatEnabled, vatPercent, language, customerName, lines: QuotationLine[], totals: QuotationTotals }`
+  - `QuotationLine = { id, description, productName, requiresLineSpecs, specs: Record<string,string> | null, quantity, unitLabel, unitPrice, lineTotal }`
+
+Add `formatSpecs` to the `./mold-specs` import in `orders.service.ts`.
 
 Task 10's page consumes this exact shape.
+
+> **Post-implementation correction (fix round 1 code review):** the
+> `updateQuotation` line-update loop below was originally written to call
+> `this.prisma.orderItem.update({ where: { id: lineId }, data: lineData })`
+> using only the client-supplied line id — it never checked that `lineId`
+> actually belongs to the order named in the URL. The method's only
+> ownership/lock check (`order.status !== 'QUOTATION'`) was performed
+> against the *URL's* order, so a caller with `EDIT_ORDERS` could target a
+> `QUOTATION`-status order in the URL while supplying a line id that
+> belongs to a different (even `CONFIRMED`/locked) order, silently
+> mutating that other order's price or quantity and bypassing its lock.
+> `updateItem`, two methods earlier in this same file, already established
+> the fix for exactly this shape of bug: `findFirst({ where: { id: itemId,
+> orderId } })` before writing, throwing `NotFoundException` on a
+> mismatch. Step 1 and Step 3 below are corrected to require and use that
+> same guard for every line update; do not implement the unscoped version
+> described in earlier drafts of this plan.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1490,7 +1967,7 @@ describe('OrdersService quotation endpoints', () => {
     status: 'QUOTATION',
     customer: { name: 'Acme Dates' },
     items: [
-      { id: 'i1', quantity: 2, unitPrice: 100, unitLabel: 'عدد', description: null, orderIndex: 0, product: { nameEn: 'Tray 500g', nameAr: null } },
+      { id: 'i1', quantity: 2, unitPrice: 100, unitLabel: 'عدد', description: null, orderIndex: 0, specs: null, product: { nameEn: 'Tray 500g', nameAr: null, requiresLineSpecs: false } },
     ],
     quotation: {
       quoteDate: new Date('2026-07-27'),
@@ -1529,6 +2006,109 @@ describe('OrdersService quotation endpoints', () => {
     expect(view.lines[0].description).toBe('Tray 500g');
   });
 
+  it('appends the specs to a mold line description', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: null, orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    const view = await service.getQuotation('o1');
+
+    expect(view.lines[0].description).toBe(
+      'New Mold — Silicone Thermoforming\nMV · 6K · 250 · Rose',
+    );
+    expect(view.lines[0].requiresLineSpecs).toBe(true);
+    expect(view.lines[0].specs).toEqual({ machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' });
+  });
+
+  it('lets an explicit description override the spec label', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      ...fullOrder,
+      items: [
+        {
+          id: 'm1', quantity: 1, unitPrice: 900, unitLabel: 'عدد',
+          description: 'Ramadan crescent mold', orderIndex: 0,
+          specs: { machine: 'MV', capacity: '6K', grams: '250', pattern: 'Rose' },
+          product: { nameEn: 'New Mold — Silicone Thermoforming', nameAr: null, requiresLineSpecs: true },
+        },
+      ],
+    });
+    const { service } = createService(prisma);
+
+    expect((await service.getQuotation('o1')).lines[0].description).toBe(
+      'Ramadan crescent mold',
+    );
+  });
+
+  it('refuses a quantity below one', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', quantity: 0 }] }),
+    ).rejects.toThrow(/at least 1/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a negative unit price', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: -5 }] }),
+    ).rejects.toThrow(/non-negative/i);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'i1', unitPrice: NaN }] }),
+    ).rejects.toThrow(/non-negative/i);
+  });
+
+  it('refuses a line id that does not belong to this order, and touches nothing', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    // The item exists, but under a different order — findFirst scoped to
+    // { id, orderId: 'o1' } finds no match, exactly as it would for real.
+    prisma.orderItem.findFirst.mockResolvedValue(null);
+    const { service } = createService(prisma);
+
+    await expect(
+      service.updateQuotation('o1', { lines: [{ id: 'foreign-item', unitPrice: 120 }] }),
+    ).rejects.toThrow(/not found/i);
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it('saves per-line spec edits', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
+    const { service } = createService(prisma);
+
+    await service.updateQuotation('o1', {
+      lines: [{ id: 'i1', specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' } }],
+    });
+
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'i1' },
+        data: expect.objectContaining({
+          specs: { machine: 'HI', capacity: '4K', grams: '500', pattern: 'Star' },
+        }),
+      }),
+    );
+  });
+
   it('refuses to edit a quotation once the order is confirmed', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue({ ...fullOrder, status: 'CONFIRMED' });
@@ -1557,6 +2137,7 @@ describe('OrdersService quotation endpoints', () => {
   it('saves per-line price edits', async () => {
     const prisma = createPrismaMock();
     prisma.order.findUnique.mockResolvedValue(fullOrder);
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', orderId: 'o1' });
     const { service } = createService(prisma);
 
     await service.updateQuotation('o1', {
@@ -1632,14 +2213,24 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
       vatPercent,
       language: q?.language ?? 'ar',
       customerName: order.customer.name,
-      lines: order.items.map((item, index) => ({
-        id: item.id,
-        description: item.description ?? item.product.nameEn,
-        quantity: item.quantity,
-        unitLabel: item.unitLabel,
-        unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
-        lineTotal: totals.lineTotals[index],
-      })),
+      lines: order.items.map((item, index) => {
+        const specLabel = formatSpecs(item.specs);
+        return {
+          id: item.id,
+          // An explicit override wins; otherwise a mold line shows its specs
+          // under the product name so the customer sees what is being quoted.
+          description:
+            item.description ??
+            (specLabel ? `${item.product.nameEn}\n${specLabel}` : item.product.nameEn),
+          productName: item.product.nameEn,
+          requiresLineSpecs: item.product.requiresLineSpecs,
+          specs: (item.specs ?? null) as Record<string, string> | null,
+          quantity: item.quantity,
+          unitLabel: item.unitLabel,
+          unitPrice: item.unitPrice === null ? null : Number(item.unitPrice),
+          lineTotal: totals.lineTotals[index],
+        };
+      }),
       totals,
     };
   }
@@ -1664,6 +2255,7 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
         unitPrice?: number | null;
         unitLabel?: string;
         description?: string | null;
+        specs?: Record<string, string> | null;
       }[];
     }>,
   ) {
@@ -1698,6 +2290,30 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
     for (const line of lines ?? []) {
       const { id: lineId, ...lineData } = line;
       if (Object.keys(lineData).length === 0) continue;
+
+      // Same money guard as create(): these feed computeQuotationTotals directly.
+      if (lineData.quantity !== undefined) {
+        if (!Number.isFinite(lineData.quantity) || lineData.quantity < 1) {
+          throw new BadRequestException('Quantity must be at least 1');
+        }
+      }
+      if (lineData.unitPrice !== undefined && lineData.unitPrice !== null) {
+        // Number.isFinite, not just `< 0`: the controller casts the raw body
+        // with no class-validator DTO, so NaN and Infinity can reach here and
+        // would poison every downstream total.
+        if (!Number.isFinite(lineData.unitPrice) || lineData.unitPrice < 0) {
+          throw new BadRequestException('Unit price must be a non-negative number');
+        }
+      }
+
+      // Same ownership guard as updateItem: without it, a lineId belonging to
+      // a different (possibly locked/CONFIRMED) order could be edited through
+      // this order's URL and status check.
+      const item = await this.prisma.orderItem.findFirst({
+        where: { id: lineId, orderId: id },
+      });
+      if (!item) throw new NotFoundException('Order item not found');
+
       await this.prisma.orderItem.update({
         where: { id: lineId },
         data: lineData,
@@ -1707,6 +2323,89 @@ Add `ConflictException` to the `@nestjs/common` import list at the top of `order
     this.wsGateway.emit('order.updated', { orderId: id });
     return this.getQuotation(id);
   }
+```
+
+- [ ] **Step 3b: Stop merging quantities for placeholder products**
+
+`addItem` (`orders.service.ts:371`) merges by `productId`, which would fold a
+second mold into the first line's quantity — losing the second design. The DB
+constraint that forced merging is gone (Task 4), so it becomes conditional.
+Task 10's "add line" button calls this endpoint, so it must be right before then.
+
+Replace the opening of `addItem` — the `existing` lookup and everything up to its
+`if (existing)` — with:
+
+```ts
+  async addItem(orderId: string, dto: { productId: string; quantity: number }, userId: string) {
+    const order = await this.getById(orderId);
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { requiresLineSpecs: true },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    // A placeholder is a new design every time; ordinary products merge.
+    const existing = product.requiresLineSpecs
+      ? null
+      : await this.prisma.orderItem.findFirst({
+          where: { orderId, productId: dto.productId },
+        });
+
+    if (existing) {
+```
+
+The update branch and the `customerProduct` upsert are unchanged. In the create
+branch, give the new line a trailing `orderIndex` so it prints last rather than
+tying at position 0:
+
+```ts
+    const lineCount = await this.prisma.orderItem.count({ where: { orderId } });
+    const item = await this.prisma.orderItem.create({
+      data: {
+        orderId,
+        productId: dto.productId,
+        quantity: dto.quantity,
+        orderIndex: lineCount,
+      },
+      include: { product: { include: { factory: true } } },
+    });
+```
+
+Add the covering test to `orders.service.spec.ts`:
+
+```ts
+describe('OrdersService.addItem', () => {
+  function setupAdd(requiresLineSpecs: boolean) {
+    const prisma = createPrismaMock();
+    prisma.order.findUnique.mockResolvedValue({
+      id: 'o1', customerId: 'c1', status: 'QUOTATION', items: [], costs: [], statusHistory: [],
+    });
+    prisma.product.findUnique.mockResolvedValue({ requiresLineSpecs });
+    prisma.orderItem.findFirst.mockResolvedValue({ id: 'i1', quantity: 1 });
+    prisma.orderItem.count = jest.fn().mockResolvedValue(2);
+    prisma.orderItem.create.mockResolvedValue({ id: 'i2' });
+    prisma.orderItem.update.mockResolvedValue({ id: 'i1', quantity: 2 });
+    return { prisma, ...createService(prisma) };
+  }
+
+  it('merges an ordinary product into the existing line', async () => {
+    const { prisma, service } = setupAdd(false);
+    await service.addItem('o1', { productId: 'p1', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).toHaveBeenCalled();
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+  });
+
+  it('always starts a new line for a placeholder product', async () => {
+    const { prisma, service } = setupAdd(true);
+    await service.addItem('o1', { productId: 'mold', quantity: 1 }, 'u1');
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(prisma.orderItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productId: 'mold', orderIndex: 2 }),
+      }),
+    );
+  });
+});
 ```
 
 - [ ] **Step 4: Add the controller routes**
@@ -1744,7 +2443,7 @@ npm -w apps/api run test
 npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tail -20
 ```
 
-Expected: all tests PASS; tsc still at the Task 1 baseline of 6.
+Expected: all tests PASS; `tsc` silent (zero errors).
 
 - [ ] **Step 6: Commit**
 
@@ -1855,41 +2554,109 @@ Create `apps/web/src/lib/quotation-totals.ts` as a **byte-for-byte copy** of `ap
 In `apps/web/src/app/(dashboard)/orders/new/page.tsx`, replace the `OrderItem` interface (lines 112–115) with:
 
 ```ts
-interface OrderItem {
+interface OrderLine {
+  lineId: string;
   productId: string;
+  productName: string;
+  requiresLineSpecs: boolean;
   quantity: number;
   unitPrice: number | null;
   unitLabel: string;
   description: string;
+  specs: Record<string, string>;
 }
 ```
 
-In `addItem` (line 259), replace the `return [...prev, { productId: product.id, quantity: 1 }];` line with:
+Lines are keyed by their own `lineId`, not by `productId`: the mold placeholder
+appears once per design, so one product can occupy several lines.
+
+Add `requiresLineSpecs: boolean;` to the `Product` interface (line 86) — the
+products endpoint already returns every product column.
+
+- [ ] **Step 3: Rework the add/update/remove helpers**
+
+Replace `addItem`, `updateQuantity`, `removeItem` and `getQuantity` (lines 259–290) with:
 
 ```ts
+  const addItem = (product: Product) => {
+    setItemsError('');
+    setOrderItems((prev) => {
+      // Ordinary products merge into one line; a mold is a new design each time.
+      if (!product.requiresLineSpecs) {
+        const existing = prev.find((i) => i.productId === product.id);
+        if (existing) {
+          return prev.map((i) =>
+            i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i,
+          );
+        }
+      }
       return [
         ...prev,
         {
+          lineId: crypto.randomUUID(),
           productId: product.id,
+          productName: product.nameEn,
+          requiresLineSpecs: product.requiresLineSpecs,
           quantity: 1,
           unitPrice: null,
           unitLabel: 'عدد',
           description: product.nameEn,
+          specs: {},
         },
       ];
-```
+    });
+  };
 
-- [ ] **Step 3: Add a line-edit helper**
-
-Immediately after `removeItem` (line 284), add:
-
-```ts
-  const updateLine = (productId: string, patch: Partial<OrderItem>) => {
+  const updateLine = (lineId: string, patch: Partial<OrderLine>) => {
     setOrderItems((prev) =>
-      prev.map((i) => (i.productId === productId ? { ...i, ...patch } : i)),
+      prev.map((i) => (i.lineId === lineId ? { ...i, ...patch } : i)),
     );
   };
+
+  const updateSpec = (lineId: string, key: string, value: string) => {
+    setOrderItems((prev) =>
+      prev.map((i) =>
+        i.lineId === lineId ? { ...i, specs: { ...i.specs, [key]: value } } : i,
+      ),
+    );
+  };
+
+  const updateQuantity = (productId: string, delta: number) => {
+    setOrderItems((prev) =>
+      prev
+        .map((i) =>
+          i.productId === productId && !i.requiresLineSpecs
+            ? { ...i, quantity: Math.max(0, i.quantity + delta) }
+            : i,
+        )
+        .filter((i) => i.quantity > 0),
+    );
+  };
+
+  const removeItem = (productId: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.productId !== productId));
+  };
+
+  const removeLine = (lineId: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.lineId !== lineId));
+  };
+
+  /** Total quantity of a product across its lines — drives the grid badge. */
+  const getQuantity = (productId: string) =>
+    orderItems
+      .filter((i) => i.productId === productId)
+      .reduce((sum, i) => sum + i.quantity, 0);
 ```
+
+The product grid's `+`/`−` buttons and its `X` still key off `productId`, so their
+JSX needs no change. For the mold placeholder the `−` is a no-op by design — mold
+lines are removed individually in step 2, where you can see which design is which.
+Change the grid's `onClick={() => !isSelected && addItem(product)}` (lines 562 and
+665) to `onClick={() => (product.requiresLineSpecs || !isSelected) && addItem(product)}`
+so clicking the mold card repeatedly adds a line each time.
+
+Also change the `orderItems.length` summary bar (line 407) to keep reading
+`orderItems.length` — with lines it now counts lines, which is what you want.
 
 - [ ] **Step 4: Add the quote state**
 
@@ -1951,21 +2718,69 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
               </thead>
               <tbody>
                 {orderItems.map((item, index) => (
-                  <tr key={item.productId} className="border-b border-gray-100">
+                  <tr key={item.lineId} className="border-b border-gray-100 align-top">
                     <td className="px-3 py-2">
                       <input
                         type="text"
                         value={item.description}
-                        onChange={(e) => updateLine(item.productId, { description: e.target.value })}
+                        onChange={(e) => updateLine(item.lineId, { description: e.target.value })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 focus:border-[#DC2626] focus:outline-none"
                       />
+                      {item.requiresLineSpecs && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <select
+                            value={item.specs.machine ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'machine', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Machine…</option>
+                            {THERMOFORMING_MACHINES.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.capacity ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'capacity', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Capacity…</option>
+                            {THERMOFORMING_CAPACITIES.map((c) => (
+                              <option key={c.value} value={c.value}>{c.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.grams ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'grams', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Grams…</option>
+                            {THERMOFORMING_GRAMS.map((g) => (
+                              <option key={g.value} value={g.value}>{g.label}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={item.specs.pattern ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'pattern', e.target.value)}
+                            placeholder="Pattern"
+                            className="w-28 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeLine(item.lineId)}
+                            className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <input
                         type="number"
                         min={1}
                         value={item.quantity}
-                        onChange={(e) => updateLine(item.productId, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+                        onChange={(e) => updateLine(item.lineId, { quantity: Math.max(1, Number(e.target.value) || 1) })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -1973,7 +2788,7 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
                       <input
                         type="text"
                         value={item.unitLabel}
-                        onChange={(e) => updateLine(item.productId, { unitLabel: e.target.value })}
+                        onChange={(e) => updateLine(item.lineId, { unitLabel: e.target.value })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -1983,7 +2798,7 @@ Then replace the entire `{step === 2 && ( ... )}` block (lines 730–773) with a
                         min={0}
                         step="0.01"
                         value={item.unitPrice ?? ''}
-                        onChange={(e) => updateLine(item.productId, { unitPrice: e.target.value === '' ? null : Number(e.target.value) })}
+                        onChange={(e) => updateLine(item.lineId, { unitPrice: e.target.value === '' ? null : Number(e.target.value) })}
                         className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
                       />
                     </td>
@@ -2114,6 +2929,29 @@ The delivery date, assignee and internal notes fields moved out of step 2. Inser
 
 Then change the `usersData` query's `enabled: step === 2` (line 220) to `enabled: step === 3`, and delete the now-unused `onStep2Submit` function (lines 318–320).
 
+The step-3 Summary card still renders items via `getProductById(item.productId)`
+(lines 795–812), which shows the same product twice for two mold lines and breaks
+once a line's product is not in the current search page. Replace that `.map` body
+so it reads from the line itself:
+
+```tsx
+                    {orderItems.map((item) => (
+                      <div
+                        key={item.lineId}
+                        className="flex flex-col items-center rounded-lg border border-gray-200 bg-gray-50 p-3 min-w-[100px]"
+                      >
+                        <span className="text-sm font-medium text-gray-900 text-center">
+                          {item.description}
+                        </span>
+                        <span className="mt-1 inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[#DC2626] px-2 text-xs font-bold text-white">
+                          {item.quantity}
+                        </span>
+                      </div>
+                    ))}
+```
+
+`getProductById` is then unused — delete it (lines 292–294).
+
 - [ ] **Step 7: Send the new fields on submit**
 
 Replace the `handleSubmit` function (lines 322–338) with:
@@ -2131,6 +2969,7 @@ Replace the `handleSubmit` function (lines 322–338) with:
         unitPrice: i.unitPrice,
         unitLabel: i.unitLabel,
         description: i.description,
+        specs: i.requiresLineSpecs ? i.specs : null,
       })),
       expectedDeliveryDate: s2.expectedDeliveryDate
         ? new Date(s2.expectedDeliveryDate).toISOString()
@@ -2214,6 +3053,13 @@ npm run dev
 
 Open http://localhost:3001/orders/new, pick a customer, add two products, enter prices, and submit. Expect a 404 on `/orders/<id>/quotation` — that page is Task 10. Confirm in Prisma Studio that the order has `status = QUOTATION`, a `QT-` number, null `order_number`, prices on both `order_items`, and an `order_quotations` row.
 
+Then run it again exercising the mold: search for `SIL-THF-NEWMOLD`, click it
+**three** times, and confirm step 2 shows three separate lines each with its own
+machine / capacity / grams / pattern controls. Give each different specs, price
+them, submit, and check in Prisma Studio that three `order_items` rows exist for
+the same `product_id` with different `specs` JSON. Clicking an ordinary product
+three times must still produce one line at quantity 3.
+
 - [ ] **Step 11: Commit**
 
 ```bash
@@ -2291,6 +3137,9 @@ import { QUOTATION_CSS } from './quotation-css';
 interface QuotationLine {
   id: string;
   description: string;
+  productName: string;
+  requiresLineSpecs: boolean;
+  specs: Record<string, string> | null;
   quantity: number;
   unitLabel: string;
   unitPrice: number | null;
@@ -2341,6 +3190,25 @@ Then, in the component:
 - Omit the `<th class="col-img">` header and every `td.img-cell` cell. The items table columns are `#`, البيان, الكمية, الوحدة, السعر, الإجمالي.
 - Copy the `I18N` object from the source (lines 494–613) into the page, minus the `thImg`, `imgLabel` and `pasteHint` keys. Drive labels off `I18N[lang]`, with `lang` in `useState<'ar' | 'en'>` seeded from `draft.language` and persisted through the same PATCH.
 - Hide the discount rows when `totals.discount === 0`, exactly as `calcAll()` does.
+- The description cell renders `line.description` with `white-space: pre-line` so
+  a mold line's spec label appears on its own second line, as the API composed it.
+- **Mold spec editors.** When `!locked && line.requiresLineSpecs`, render the four
+  controls under the description cell — machine, capacity and grams as `<select>`,
+  pattern as free text — patching through the same debounced save:
+
+  ```tsx
+  const setSpec = (line: QuotationLine, key: string, value: string) =>
+    save({ lines: [{ id: line.id, specs: { ...(line.specs ?? {}), [key]: value } }] });
+  ```
+
+  Copy the option lists — `THERMOFORMING_MACHINES`, `THERMOFORMING_CAPACITIES`,
+  `THERMOFORMING_GRAMS` — from `orders/new/page.tsx:23-45`. Wrap the controls in a
+  container with `className="qform-specs"` and add `.qform .qform-specs { display: none; }`
+  inside the stylesheet's `@media print` block: the customer's copy shows the
+  composed spec label, not dropdowns.
+- Show an inline warning above the table when any mold line is missing specs —
+  `Missing mold specifications — this quotation cannot be confirmed until they are set.`
+  It mirrors the API's confirmation check so the block is not a surprise later.
 - Inject the stylesheet once: `<style dangerouslySetInnerHTML={{ __html: QUOTATION_CSS }} />`.
 
 Print handler:
@@ -2671,7 +3539,7 @@ npx tsc --noEmit -p apps/web/tsconfig.json 2>&1 | tail -20
 npm run dev
 ```
 
-`tsc` must be back to the Task 1 baseline on both projects. Then walk the whole flow:
+`tsc` must be silent on both projects — zero errors. Then walk the whole flow:
 
 1. `/orders/new` — create a quotation with prices
 2. Land on the quotation page, edit a price, print
@@ -2680,6 +3548,9 @@ npm run dev
 5. Confirm it now has an `ORD-` and `FO-` number, the quotation page is read-only, product inventory dropped, and a `SELLING_PRICE` cost equal to the grand total appears under Costs
 6. Create a second quotation and mark it rejected — it leaves the Quotations tab
 7. The dashboard's recent-orders list shows the `QT-` number for quotations
+8. Quote three molds with different specs; each prints its own spec line
+9. Clear one mold's grams and try to confirm — it is refused, naming that line
+10. Set the grams and confirm — it succeeds
 
 - [ ] **Step 9: Commit**
 
@@ -2707,12 +3578,76 @@ git merge --no-ff feat/order-quotation-stage
 
 The live database is the **`hqq_db`** docker container on port **5434** (user `hqq`, database `hqq_oms`), per `/opt/hqq-oms/.env`. The `hqq_postgres` container on 5432 is unused — do not touch it.
 
+Take the dump in **custom format** (`-Fc`). A plain-SQL dump taken without
+`--clean` cannot restore over an existing, still-populated database: every
+`CREATE TABLE` fails with "relation already exists", `psql` has no
+`ON_ERROR_STOP` by default so it keeps going, and the `COPY` blocks then
+either duplicate rows or die on primary-key conflicts — leaving the database
+in a worse state than the failure being rolled back from. Custom format
+restores through `pg_restore`, and `-C` records the `CREATE DATABASE` entry in
+the archive so the rollback can drop and recreate the whole database rather
+than trying to drop objects one by one — see the rollback section for why that
+distinction decides whether the rollback works at all.
+
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "docker exec hqq_db pg_dump -U hqq hqq_oms | gzip > /root/hqq_oms-before-quotation-$(date +%Y%m%d).sql.gz && ls -lh /root/hqq_oms-before-quotation-*.sql.gz"
+  "docker exec hqq_db pg_dump -U hqq -Fc -C hqq_oms > /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && ls -lh /root/hqq_oms-before-quotation-*.dump"
 ```
 
-Confirm the file is non-trivial in size before continuing. **Do not proceed without a verified backup** — the migration rewrites the `status` column on every order.
+Confirm the file is non-trivial in size before continuing.
+
+- [ ] **Step 2b: Prove the dump is restorable — before the migration runs**
+
+A backup nobody has restored is a hypothesis, not a backup. Restore it into a
+scratch database on the same container and compare row counts against the live
+one. **Do not proceed to Step 3 until this passes** — the migration rewrites
+the `status` column on every order, and this dump is the only way back.
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d postgres -c 'DROP DATABASE IF EXISTS hqq_oms_restorecheck;' -c 'CREATE DATABASE hqq_oms_restorecheck OWNER hqq;' && \
+   docker exec -i hqq_db pg_restore --no-owner -U hqq -d hqq_oms_restorecheck < /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump && \
+   docker exec hqq_db psql -U hqq -d hqq_oms_restorecheck -c \"SELECT 'restored' AS src, (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_items) AS items, (SELECT count(*) FROM customers) AS customers;\" && \
+   docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT 'live' AS src, (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_items) AS items, (SELECT count(*) FROM customers) AS customers;\""
+```
+
+The two rows must match exactly. `pg_restore` may print warnings about roles or
+extensions it could not recreate in the scratch database — those are fine; a
+non-zero exit or a mismatched count is not.
+
+**Then demonstrate why the rollback uses `--create`,** on the scratch database,
+where it costs nothing. Apply the migration to the scratch copy and try the
+naive `--clean --if-exists` restore against it:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec -i hqq_db psql -U hqq -d hqq_oms_restorecheck -v ON_ERROR_STOP=1 < /opt/hqq-oms/prisma/migrations/20260727000000_order_quotation_stage/migration.sql && \
+   docker exec hqq_db psql -U hqq -d hqq_oms_restorecheck -c \"SELECT to_regclass('order_quotations') AS after_migration;\" && \
+   docker exec -i hqq_db pg_restore --clean --if-exists --no-owner --exit-on-error -U hqq -d hqq_oms_restorecheck < /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump ; echo \"naive restore exit: \$?\""
+```
+
+Expect it to **fail**, with `cannot drop table orders because other objects
+depend on it — constraint order_quotations_order_id_fkey`. That is the whole
+reason the rollback section uses `--clean --create` against the `postgres`
+maintenance database instead: `--create` drops and recreates the entire
+database from the archive, so an object the archive has never heard of cannot
+block it. A non-zero exit here is the expected, correct result — it confirms
+the hazard is real and that the rollback command avoids it structurally.
+
+Verify the recreate path itself works by checking the archive carries its own
+`CREATE DATABASE` entry, which is what `--create` replays:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db pg_restore --list /root/hqq_oms-before-quotation-$(date +%Y%m%d).dump | grep -i 'DATABASE' | head -5"
+```
+
+Then drop the scratch database so it cannot be mistaken for the live one:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d postgres -c 'DROP DATABASE hqq_oms_restorecheck;'"
+```
 
 - [ ] **Step 3: Ship the code**
 
@@ -2722,6 +3657,50 @@ git archive --format=tar main apps prisma package.json package-lock.json tsconfi
 scp -i ~/.ssh/hqq_oms_ed25519 deploy.tar.gz root@46.224.197.38:/tmp/
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 "tar xzf /tmp/deploy.tar.gz -C /opt/hqq-oms"
 ```
+
+- [ ] **Step 3b: Pre-flight the migration against production**
+
+This repo's migration history drifted from its databases under `db push`
+(see Global Constraints). `migrate deploy` does not drift-check — it simply
+applies pending migrations — so confirm production is in the state this
+migration expects before running it.
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT migration_name FROM _prisma_migrations ORDER BY started_at;\" -c \"SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name='orders' AND column_name IN ('order_number','factory_order_number','quote_number','confirmed_at');\""
+```
+
+Expected: the same 9 migrations as local, `20260727000000_order_quotation_stage`
+**absent**, `order_number` and `factory_order_number` present and `NO` (not
+nullable), `quote_number` and `confirmed_at` absent.
+
+The migration was generated by diffing the **local dev database**, and this repo
+has `db push` drift — so production's starting shape must be confirmed to match,
+not assumed. The migration's placeholder INSERT reads `product_categories` and
+`product_subcategories`, and its ALTERs assume specific columns exist:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d hqq_oms \
+   -c \"SELECT to_regclass('product_categories') AS cats, to_regclass('product_subcategories') AS subs, to_regclass('order_quotations') AS quotations;\" \
+   -c \"SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name IN ('category_id','subcategory_id','inventory','specs','requires_line_specs') ORDER BY 1;\" \
+   -c \"SELECT indexname FROM pg_indexes WHERE tablename='order_items';\" \
+   -c \"SELECT sku_prefix FROM product_categories WHERE sku_prefix='SIL';\" \
+   -c \"SELECT count(*) AS orders_at_new FROM orders WHERE status='NEW';\""
+```
+
+Expected: `cats` and `subs` non-null, `quotations` **null**; `products` has
+`category_id`, `subcategory_id`, `inventory`, `specs` but **not**
+`requires_line_specs`; `order_items` still has
+`order_items_order_id_product_id_key`; one `SIL` row exists.
+
+`orders_at_new` tells you how many rows the backfill will convert. **Record that
+number** — the dev database had zero orders at `NEW`, so the backfill ran against
+nothing locally and is unexercised. After the migration, re-run that same count:
+it must be 0, and `CONFIRMED` must have risen by exactly that amount.
+
+If any expectation fails, stop. Do not run `migrate deploy` against a database
+whose shape differs from the one the migration was generated against.
 
 - [ ] **Step 4: Migrate, build, restart**
 
@@ -2761,11 +3740,55 @@ git push origin main
 
 ## Rollback
 
-If the migration lands but the app misbehaves, restore the pre-migration dump:
+If the migration lands but the app misbehaves, restore the pre-migration dump
+taken in Step 2 and verified in Step 2b.
+
+Stop the app first, so nothing is writing while objects are being dropped and
+recreated:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 "pm2 stop hqq-api hqq-web"
+```
+
+Then restore — with `--clean --create`, targeting the `postgres` maintenance
+database, **not** `--clean --if-exists` against `hqq_oms`.
+
+This distinction is the whole rollback. `--clean` only drops objects that are
+**in the archive**, and the archive is the *pre-migration* dump — it has no
+`order_quotations`. That table's `order_quotations_order_id_fkey` (created by
+`migration.sql:54`) therefore survives the drop pass and makes
+`DROP TABLE public.orders` fail, because `pg_restore` never emits `CASCADE`.
+Since all drops run in one reverse-TOC pass before any create, `--exit-on-error`
+would abort *after* `order_items`, `customers` and `products` had already been
+dropped and *before* anything was restored — destroying the database in the one
+state this command will ever run in. `--create` sidesteps it entirely by
+dropping and recreating the whole database from the archive:
 
 ```bash
 ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
-  "gunzip -c /root/hqq_oms-before-quotation-<date>.sql.gz | docker exec -i hqq_db psql -U hqq -d hqq_oms"
+  "docker exec hqq_db psql -U hqq -d postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='hqq_oms' AND pid <> pg_backend_pid();\" && \
+   docker exec -i hqq_db pg_restore --clean --create --no-owner --exit-on-error -U hqq -d postgres < /root/hqq_oms-before-quotation-<date>.dump"
 ```
 
-then check out the previous commit, rebuild, and `pm2 restart hqq-api hqq-web`. The migration is not reversible by `prisma migrate` alone: the `NEW` → `CONFIRMED` backfill has no down script, and rolling back the code without the data leaves every order at a status the old flow does not recognise.
+`pm2 stop` above already ended the app's connections; the
+`pg_terminate_backend` call clears any stray session (a psql left open in
+another window) that would otherwise make `DROP DATABASE` fail.
+
+Verify the data is back where it was before continuing:
+
+```bash
+ssh -i ~/.ssh/hqq_oms_ed25519 root@46.224.197.38 \
+  "docker exec hqq_db psql -U hqq -d hqq_oms -c \"SELECT status, count(*) FROM orders GROUP BY status ORDER BY 2 DESC;\" -c \"SELECT to_regclass('order_quotations') AS quotations;\""
+```
+
+Expected: the pre-migration status distribution is back (`NEW` present again if
+it was, no `QUOTATION`/`REJECTED`), and `quotations` is null.
+
+Then check out the previous commit, rebuild, and `pm2 restart hqq-api hqq-web`.
+
+If for any reason the dump was taken in **plain** format instead, it must have
+been taken with `--clean --if-exists` (`pg_dump -U hqq --clean --if-exists
+hqq_oms | gzip > …`) to be restorable this way, and must then be replayed with
+`psql -v ON_ERROR_STOP=1` so a failure halts rather than compounding. A plain
+dump taken without those flags is **not** a usable rollback — do not attempt to
+replay one into the live database. The migration is not reversible by `prisma migrate` alone: the `NEW` → `CONFIRMED` backfill has no down script, and rolling back the code without the data leaves every order at a status the old flow does not recognise.

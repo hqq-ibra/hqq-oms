@@ -1,5 +1,6 @@
 export enum OrderStatus {
-  NEW = 'NEW',
+  QUOTATION = 'QUOTATION',
+  CONFIRMED = 'CONFIRMED',
   SAMPLE_RECEIVED = 'SAMPLE_RECEIVED',
   CAD_DRAWING_READY = 'CAD_DRAWING_READY',
   SENT_TO_FACTORY = 'SENT_TO_FACTORY',
@@ -9,6 +10,7 @@ export enum OrderStatus {
   RECEIVED_LOCALLY = 'RECEIVED_LOCALLY',
   SHIPPED_TO_CUSTOMER = 'SHIPPED_TO_CUSTOMER',
   COMPLETED = 'COMPLETED',
+  REJECTED = 'REJECTED',
 }
 
 export enum OrderType {
@@ -58,7 +60,8 @@ export enum EntityType {
 }
 
 export const NEW_MOLD_FLOW: readonly string[] = [
-  'NEW',
+  'QUOTATION',
+  'CONFIRMED',
   'SAMPLE_RECEIVED',
   'CAD_DRAWING_READY',
   'SENT_TO_FACTORY',
@@ -71,7 +74,8 @@ export const NEW_MOLD_FLOW: readonly string[] = [
 ];
 
 export const REPEAT_FLOW: readonly string[] = [
-  'NEW',
+  'QUOTATION',
+  'CONFIRMED',
   'SENT_TO_FACTORY',
   'SILICONE_CASTING',
   'SHIPPED_FROM_FACTORY',

@@ -17,6 +17,7 @@ import {
 } from '@/components/ui';
 import { useToast } from '@/components/ui';
 import { OrderType } from '@/lib/types';
+import { computeQuotationTotals } from '@/lib/quotation-totals';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search, Plus, Minus, X, FileText } from 'lucide-react';
 
@@ -59,9 +60,9 @@ interface ProductFile {
 }
 
 const STEPS = [
-  { id: 1, label: 'Order & Customer' },
-  { id: 2, label: 'Details' },
-  { id: 3, label: 'Review & Submit' },
+  { id: 1, label: 'Customer & Products' },
+  { id: 2, label: 'Quotation' },
+  { id: 3, label: 'Details & Submit' },
 ];
 
 const step1Schema = z.object({
@@ -90,6 +91,7 @@ interface Product {
   factoryId: string;
   factory?: { id: string; name: string };
   _count?: { files: number };
+  requiresLineSpecs: boolean;
 }
 
 interface User {
@@ -109,9 +111,16 @@ interface UsersResponse {
   data: User[];
 }
 
-interface OrderItem {
+interface OrderLine {
+  lineId: string;
   productId: string;
+  productName: string;
+  requiresLineSpecs: boolean;
   quantity: number;
+  unitPrice: number | null;
+  unitLabel: string;
+  description: string;
+  specs: Record<string, string>;
 }
 
 export default function NewOrderPage() {
@@ -128,8 +137,14 @@ export default function NewOrderPage() {
   const [pGrams, setPGrams] = useState('');
   const [pPattern, setPPattern] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [orderItems, setOrderItems] = useState<OrderLine[]>([]);
   const [itemsError, setItemsError] = useState('');
+  const [discountAmount, setDiscountAmount] = useState(0);
+  const [vatEnabled, setVatEnabled] = useState(true);
+  const [vatPercent, setVatPercent] = useState(15);
+  const [validUntil, setValidUntil] = useState('');
+  const [payMethod, setPayMethod] = useState('نقداً / تحويل بنكي');
+  const [quoteNotes, setQuoteNotes] = useState('');
   const [viewFilesProductId, setViewFilesProductId] = useState<string | null>(null);
 
   const step1Form = useForm<Step1Values>({
@@ -217,7 +232,7 @@ export default function NewOrderPage() {
     queryKey: ['users'],
     queryFn: () =>
       api.get<UsersResponse>('/api/v1/users', { pageSize: '100' }),
-    enabled: step === 2,
+    enabled: step === 3,
   });
 
   const createMutation = useMutation({
@@ -226,7 +241,7 @@ export default function NewOrderPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       addToast('Order created successfully', 'success');
-      router.push(`/orders/${(data as { id: string }).id}`);
+      router.push(`/orders/${(data as { id: string }).id}/quotation`);
     },
     onError: (err: Error) => {
       addToast(err.message || 'Failed to create order', 'error');
@@ -259,21 +274,51 @@ export default function NewOrderPage() {
   const addItem = (product: Product) => {
     setItemsError('');
     setOrderItems((prev) => {
-      const existing = prev.find((i) => i.productId === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i,
-        );
+      // Ordinary products merge into one line; a mold is a new design each time.
+      if (!product.requiresLineSpecs) {
+        const existing = prev.find((i) => i.productId === product.id);
+        if (existing) {
+          return prev.map((i) =>
+            i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i,
+          );
+        }
       }
-      return [...prev, { productId: product.id, quantity: 1 }];
+      return [
+        ...prev,
+        {
+          lineId: crypto.randomUUID(),
+          productId: product.id,
+          productName: product.nameEn,
+          requiresLineSpecs: product.requiresLineSpecs,
+          quantity: 1,
+          unitPrice: null,
+          unitLabel: 'عدد',
+          description: product.nameEn,
+          specs: {},
+        },
+      ];
     });
+  };
+
+  const updateLine = (lineId: string, patch: Partial<OrderLine>) => {
+    setOrderItems((prev) =>
+      prev.map((i) => (i.lineId === lineId ? { ...i, ...patch } : i)),
+    );
+  };
+
+  const updateSpec = (lineId: string, key: string, value: string) => {
+    setOrderItems((prev) =>
+      prev.map((i) =>
+        i.lineId === lineId ? { ...i, specs: { ...i.specs, [key]: value } } : i,
+      ),
+    );
   };
 
   const updateQuantity = (productId: string, delta: number) => {
     setOrderItems((prev) =>
       prev
         .map((i) =>
-          i.productId === productId
+          i.productId === productId && !i.requiresLineSpecs
             ? { ...i, quantity: Math.max(0, i.quantity + delta) }
             : i,
         )
@@ -281,17 +326,29 @@ export default function NewOrderPage() {
     );
   };
 
+  // The grid's corner "X" is keyed by productId, but a mold placeholder can
+  // occupy several independently-configured lines under one productId — a
+  // naive filter-by-productId would silently wipe every design in one click.
+  // Mirrors updateQuantity's existing no-op for the same reason: a mold line
+  // is only ever removed individually in Step 2, where its specs are visible.
   const removeItem = (productId: string) => {
-    setOrderItems((prev) => prev.filter((i) => i.productId !== productId));
+    setOrderItems((prev) => {
+      if (prev.some((i) => i.productId === productId && i.requiresLineSpecs)) {
+        return prev;
+      }
+      return prev.filter((i) => i.productId !== productId);
+    });
   };
 
-  const getQuantity = (productId: string) => {
-    return orderItems.find((i) => i.productId === productId)?.quantity ?? 0;
+  const removeLine = (lineId: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.lineId !== lineId));
   };
 
-  const getProductById = (productId: string) => {
-    return products.find((p) => p.id === productId);
-  };
+  /** Total quantity of a product across its lines — drives the grid badge. */
+  const getQuantity = (productId: string) =>
+    orderItems
+      .filter((i) => i.productId === productId)
+      .reduce((sum, i) => sum + i.quantity, 0);
 
   const handleFileClick = async (product: Product) => {
     const count = product._count?.files ?? 0;
@@ -315,10 +372,6 @@ export default function NewOrderPage() {
     setStep(2);
   };
 
-  const onStep2Submit = (data: Step2Values) => {
-    setStep(3);
-  };
-
   const handleSubmit = () => {
     const s1 = step1Form.getValues();
     const s2 = step2Form.getValues();
@@ -328,14 +381,33 @@ export default function NewOrderPage() {
       items: orderItems.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        unitLabel: i.unitLabel,
+        description: i.description,
+        specs: i.requiresLineSpecs ? i.specs : null,
       })),
       expectedDeliveryDate: s2.expectedDeliveryDate
         ? new Date(s2.expectedDeliveryDate).toISOString()
         : undefined,
       assignedUserId: s2.assignedUserId || undefined,
       internalNotes: s2.internalNotes || undefined,
+      quotation: {
+        validUntil: validUntil || undefined,
+        payMethod,
+        notes: quoteNotes || undefined,
+        discountAmount,
+        vatEnabled,
+        vatPercent,
+      },
     });
   };
+
+  const totals = computeQuotationTotals({
+    lines: orderItems.map((i) => ({ quantity: i.quantity, unitPrice: i.unitPrice })),
+    discountAmount,
+    vatEnabled,
+    vatPercent,
+  });
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -542,6 +614,7 @@ export default function NewOrderPage() {
                             <button
                               type="button"
                               onClick={() => removeItem(product.id)}
+                              title={product.requiresLineSpecs ? 'Remove each design individually in the Quotation step' : 'Remove'}
                               className="absolute -right-1.5 -top-1.5 rounded-full bg-red-100 p-0.5 text-red-600 hover:bg-red-200"
                             >
                               <X className="h-3 w-3" />
@@ -559,7 +632,7 @@ export default function NewOrderPage() {
                           )}
                           <button
                             type="button"
-                            onClick={() => !isSelected && addItem(product)}
+                            onClick={() => (product.requiresLineSpecs || !isSelected) && addItem(product)}
                             className={`flex flex-col items-center text-center ${!isSelected ? 'cursor-pointer' : 'cursor-default'}`}
                           >
                             <span className="text-sm font-medium text-gray-900 line-clamp-2">
@@ -645,6 +718,7 @@ export default function NewOrderPage() {
                             <button
                               type="button"
                               onClick={() => removeItem(product.id)}
+                              title={product.requiresLineSpecs ? 'Remove each design individually in the Quotation step' : 'Remove'}
                               className="absolute -right-1.5 -top-1.5 rounded-full bg-red-100 p-0.5 text-red-600 hover:bg-red-200"
                             >
                               <X className="h-3 w-3" />
@@ -662,7 +736,7 @@ export default function NewOrderPage() {
                           )}
                           <button
                             type="button"
-                            onClick={() => !isSelected && addItem(product)}
+                            onClick={() => (product.requiresLineSpecs || !isSelected) && addItem(product)}
                             className={`flex flex-col items-center text-center ${!isSelected ? 'cursor-pointer' : 'cursor-default'}`}
                           >
                             <span className="text-sm font-medium text-gray-900 line-clamp-2">
@@ -729,52 +803,224 @@ export default function NewOrderPage() {
 
       {/* Step 2 */}
       {step === 2 && (
-        <form
-          onSubmit={step2Form.handleSubmit(onStep2Submit)}
-          className="space-y-6"
-        >
-          <Input
-            label="Expected delivery date"
-            type="date"
-            {...step2Form.register('expectedDeliveryDate')}
-          />
-          <Select
-            label="Assign user"
-            options={userOptions}
-            placeholder="Select user (optional)"
-            {...step2Form.register('assignedUserId')}
-          />
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Internal notes
-            </label>
-            <textarea
-              {...step2Form.register('internalNotes')}
-              rows={4}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#DC2626]"
-              placeholder="Optional notes..."
+        <div className="space-y-6">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-white">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold">Description</th>
+                  <th className="w-24 px-3 py-2 font-semibold">Qty</th>
+                  <th className="w-28 px-3 py-2 font-semibold">Unit</th>
+                  <th className="w-32 px-3 py-2 font-semibold">Price</th>
+                  <th className="w-32 px-3 py-2 font-semibold">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orderItems.map((item, index) => (
+                  <tr key={item.lineId} className="border-b border-gray-100 align-top">
+                    <td className="px-3 py-2">
+                      <input
+                        type="text"
+                        value={item.description}
+                        onChange={(e) => updateLine(item.lineId, { description: e.target.value })}
+                        className="w-full rounded border border-gray-200 px-2 py-1.5 focus:border-[#DC2626] focus:outline-none"
+                      />
+                      {item.requiresLineSpecs && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <select
+                            value={item.specs.machine ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'machine', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Machine…</option>
+                            {THERMOFORMING_MACHINES.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.capacity ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'capacity', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Capacity…</option>
+                            {THERMOFORMING_CAPACITIES.map((c) => (
+                              <option key={c.value} value={c.value}>{c.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={item.specs.grams ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'grams', e.target.value)}
+                            className="rounded border border-gray-300 px-2 py-1 text-xs"
+                          >
+                            <option value="">Grams…</option>
+                            {THERMOFORMING_GRAMS.map((g) => (
+                              <option key={g.value} value={g.value}>{g.label}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={item.specs.pattern ?? ''}
+                            onChange={(e) => updateSpec(item.lineId, 'pattern', e.target.value)}
+                            placeholder="Pattern"
+                            className="w-28 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeLine(item.lineId)}
+                            className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.quantity}
+                        onChange={(e) => updateLine(item.lineId, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+                        className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="text"
+                        value={item.unitLabel}
+                        onChange={(e) => updateLine(item.lineId, { unitLabel: e.target.value })}
+                        className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={item.unitPrice ?? ''}
+                        onChange={(e) => updateLine(item.lineId, { unitPrice: e.target.value === '' ? null : Number(e.target.value) })}
+                        className="w-full rounded border border-gray-200 px-2 py-1.5 text-center focus:border-[#DC2626] focus:outline-none"
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-center font-bold text-[#DC2626]">
+                      {totals.lineTotals[index].toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Valid until"
+              type="date"
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
+            />
+            <Input
+              label="Payment terms"
+              type="text"
+              value={payMethod}
+              onChange={(e) => setPayMethod(e.target.value)}
             />
           </div>
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between py-1 text-sm">
+              <span className="text-gray-500">Subtotal</span>
+              <span className="font-semibold">{totals.subtotal.toFixed(2)} SAR</span>
+            </div>
+            <div className="flex items-center justify-between py-1 text-sm">
+              <span className="text-gray-500">Discount (SAR)</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={discountAmount}
+                onChange={(e) => setDiscountAmount(Number(e.target.value) || 0)}
+                className="w-28 rounded border border-gray-300 px-2 py-1 text-center"
+              />
+            </div>
+            <div className="flex items-center justify-between py-1 text-sm">
+              <label className="flex cursor-pointer items-center gap-2 text-gray-500">
+                <input
+                  type="checkbox"
+                  checked={vatEnabled}
+                  onChange={(e) => setVatEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                VAT %
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.5"
+                value={vatPercent}
+                onChange={(e) => setVatPercent(Number(e.target.value) || 0)}
+                disabled={!vatEnabled}
+                className="w-28 rounded border border-gray-300 px-2 py-1 text-center disabled:bg-gray-100"
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between rounded bg-[#DC2626] px-3 py-2 text-white">
+              <span className="font-bold">Grand total</span>
+              <span className="text-lg font-extrabold">{totals.grandTotal.toFixed(2)} SAR</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              Quotation notes (visible to the customer)
+            </label>
+            <textarea
+              value={quoteNotes}
+              onChange={(e) => setQuoteNotes(e.target.value)}
+              rows={3}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#DC2626]"
+              placeholder="Any additional terms or remarks..."
+            />
+          </div>
+
           <div className="flex justify-between">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setStep(1)}
-            >
+            <Button type="button" variant="secondary" onClick={() => setStep(1)}>
               <ChevronLeft className="h-4 w-4" />
               Back
             </Button>
-            <Button type="submit" variant="primary">
+            <Button type="button" variant="primary" onClick={() => setStep(3)}>
               Next
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-        </form>
+        </div>
       )}
 
       {/* Step 3 */}
       {step === 3 && (
         <div className="space-y-6">
+          <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-6">
+            <Input
+              label="Expected delivery date"
+              type="date"
+              {...step2Form.register('expectedDeliveryDate')}
+            />
+            <Select
+              label="Assign user"
+              options={userOptions}
+              placeholder="Select user (optional)"
+              {...step2Form.register('assignedUserId')}
+            />
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Internal notes
+              </label>
+              <textarea
+                {...step2Form.register('internalNotes')}
+                rows={3}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#DC2626]"
+                placeholder="Optional notes..."
+              />
+            </div>
+          </div>
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <h3 className="mb-4 font-semibold text-gray-900">Summary</h3>
             <dl className="space-y-3 text-sm">
@@ -792,24 +1038,19 @@ export default function NewOrderPage() {
                 </dt>
                 <dd>
                   <div className="mt-2 flex flex-wrap gap-3">
-                    {orderItems.map((item) => {
-                      const product = getProductById(item.productId);
-                      if (!product) return null;
-                      return (
-                        <div
-                          key={item.productId}
-                          className="flex flex-col items-center rounded-lg border border-gray-200 bg-gray-50 p-3 min-w-[100px]"
-                        >
-                          <span className="text-sm font-medium text-gray-900 text-center">
-                            {product.nameEn}
-                          </span>
-                          <span className="text-xs text-gray-500">{product.sku}</span>
-                          <span className="mt-1 inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[#DC2626] px-2 text-xs font-bold text-white">
-                            {item.quantity}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    {orderItems.map((item) => (
+                      <div
+                        key={item.lineId}
+                        className="flex flex-col items-center rounded-lg border border-gray-200 bg-gray-50 p-3 min-w-[100px]"
+                      >
+                        <span className="text-sm font-medium text-gray-900 text-center">
+                          {item.description}
+                        </span>
+                        <span className="mt-1 inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[#DC2626] px-2 text-xs font-bold text-white">
+                          {item.quantity}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </dd>
               </div>

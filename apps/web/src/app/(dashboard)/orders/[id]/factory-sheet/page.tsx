@@ -7,7 +7,7 @@ import { Button } from '@/components/ui';
 import { Printer } from 'lucide-react';
 
 interface FactorySheetData {
-  factoryOrderNumber: string;
+  factoryOrderNumber: string | null;
   productNameEn: string;
   sku: string;
   notes: string | null;
@@ -57,7 +57,7 @@ export default function FactorySheetPage() {
               Factory Order Number
             </p>
             <p className="mt-1 text-3xl font-bold text-gray-900 md:text-4xl">
-              {data.factoryOrderNumber}
+              {data.factoryOrderNumber ?? 'Not confirmed yet'}
             </p>
           </div>
 

@@ -72,8 +72,9 @@ interface OrderItem {
 
 interface OrderDetail {
   id: string;
-  orderNumber: string;
-  factoryOrderNumber: string;
+  orderNumber: string | null;
+  factoryOrderNumber: string | null;
+  quoteNumber: string | null;
   orderType: string;
   status: string;
   expectedDeliveryDate: string | null;
@@ -441,6 +442,16 @@ export default function OrderDetailPage() {
   const nextStatuses = getNextStatuses();
   const canChangeStatus = hasPermission(Permission.CHANGE_STATUS) && nextStatuses.length > 0;
 
+  // Lines are only editable while the order is still a quotation. Revenue (the
+  // SELLING_PRICE cost row that Reports and Analytics read) and the stock
+  // decrement are both derived exactly once, at the confirmation instant, from
+  // the lines as they stand then — so bumping a quantity afterwards would
+  // leave the books recording a price and an inventory movement for
+  // quantities the order no longer has. The API rejects these edits with a
+  // 409 (orders.service.ts assertItemsEditable); this hides the controls so
+  // the rejection is never reached by accident.
+  const itemsEditable = order?.status === OrderStatus.QUOTATION;
+
   if (isLoading || !order) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -487,10 +498,12 @@ export default function OrderDetailPage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              {order.orderNumber}
+              {order.orderNumber ?? order.quoteNumber ?? '—'}
             </h1>
             <p className="text-sm text-gray-500">
-              Factory: {order.factoryOrderNumber}
+              {order.factoryOrderNumber
+                ? `Factory: ${order.factoryOrderNumber}`
+                : 'Not confirmed yet — no factory order number'}
             </p>
           </div>
         </div>
@@ -501,6 +514,26 @@ export default function OrderDetailPage() {
           >
             {order.status.replace(/_/g, ' ')}
           </Badge>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => router.push(`/orders/${id}/quotation`)}
+          >
+            <FileText className="h-4 w-4" />
+            Quotation
+          </Button>
+          {order.status === 'QUOTATION' && hasPermission(Permission.CHANGE_STATUS) && (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => {
+                setSelectedStatusForChange('REJECTED');
+                setStatusModalOpen(true);
+              }}
+            >
+              Mark rejected
+            </Button>
+          )}
           {canChangeStatus && (
             <Select
               options={[
@@ -709,14 +742,16 @@ export default function OrderDetailPage() {
       <Card
         title={`Items (${order.items?.length ?? 0})`}
         footer={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setAddItemOpen(true); setAddItemSearch(''); }}
-          >
-            <Plus className="h-4 w-4" />
-            Add item
-          </Button>
+          itemsEditable ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setAddItemOpen(true); setAddItemSearch(''); }}
+            >
+              <Plus className="h-4 w-4" />
+              Add item
+            </Button>
+          ) : undefined
         }
       >
         {order.items && order.items.length > 0 ? (
@@ -728,7 +763,7 @@ export default function OrderDetailPage() {
                   <th className="pb-2 font-medium">SKU</th>
                   <th className="pb-2 font-medium">Factory</th>
                   <th className="pb-2 font-medium w-20">Qty</th>
-                  <th className="pb-2 font-medium w-10"></th>
+                  {itemsEditable && <th className="pb-2 font-medium w-10"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -740,42 +775,48 @@ export default function OrderDetailPage() {
                       {item.product.factory?.name ?? '—'}
                     </td>
                     <td className="py-2">
-                      <input
-                        type="number"
-                        min={1}
-                        value={editingQty[item.id] ?? item.quantity}
-                        onChange={(e) => setEditingQty((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        onBlur={() => {
-                          const raw = editingQty[item.id];
-                          setEditingQty((prev) => {
-                            const next = { ...prev };
-                            delete next[item.id];
-                            return next;
-                          });
-                          const v = parseInt(String(raw ?? item.quantity), 10);
-                          const final = Number.isNaN(v) || v < 1 ? 1 : v;
-                          if (final !== item.quantity) {
-                            updateItemMutation.mutate({ itemId: item.id, quantity: final });
-                          }
-                        }}
-                        className="h-8 w-14 rounded border border-gray-300 px-2 text-center text-sm font-semibold text-[#DC2626] focus:border-[#DC2626] focus:outline-none focus:ring-1 focus:ring-[#DC2626]"
-                      />
+                      {itemsEditable ? (
+                        <input
+                          type="number"
+                          min={1}
+                          value={editingQty[item.id] ?? item.quantity}
+                          onChange={(e) => setEditingQty((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          onBlur={() => {
+                            const raw = editingQty[item.id];
+                            setEditingQty((prev) => {
+                              const next = { ...prev };
+                              delete next[item.id];
+                              return next;
+                            });
+                            const v = parseInt(String(raw ?? item.quantity), 10);
+                            const final = Number.isNaN(v) || v < 1 ? 1 : v;
+                            if (final !== item.quantity) {
+                              updateItemMutation.mutate({ itemId: item.id, quantity: final });
+                            }
+                          }}
+                          className="h-8 w-14 rounded border border-gray-300 px-2 text-center text-sm font-semibold text-[#DC2626] focus:border-[#DC2626] focus:outline-none focus:ring-1 focus:ring-[#DC2626]"
+                        />
+                      ) : (
+                        <span className="font-semibold text-gray-900">{item.quantity}</span>
+                      )}
                     </td>
-                    <td className="py-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
-                        onClick={() => {
-                          if (confirm('Remove this item from the order?')) {
-                            removeItemMutation.mutate(item.id);
-                          }
-                        }}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </td>
+                    {itemsEditable && (
+                      <td className="py-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                          onClick={() => {
+                            if (confirm('Remove this item from the order?')) {
+                              removeItemMutation.mutate(item.id);
+                            }
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

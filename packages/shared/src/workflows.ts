@@ -1,7 +1,8 @@
 import { OrderStatus, OrderType } from './enums';
 
 export const NEW_MOLD_FLOW: OrderStatus[] = [
-  OrderStatus.NEW,
+  OrderStatus.QUOTATION,
+  OrderStatus.CONFIRMED,
   OrderStatus.SAMPLE_RECEIVED,
   OrderStatus.CAD_DRAWING_READY,
   OrderStatus.SENT_TO_FACTORY,
@@ -14,7 +15,8 @@ export const NEW_MOLD_FLOW: OrderStatus[] = [
 ];
 
 export const REPEAT_FLOW: OrderStatus[] = [
-  OrderStatus.NEW,
+  OrderStatus.QUOTATION,
+  OrderStatus.CONFIRMED,
   OrderStatus.SENT_TO_FACTORY,
   OrderStatus.SILICONE_CASTING,
   OrderStatus.SHIPPED_FROM_FACTORY,
@@ -46,7 +48,9 @@ export function isValidTransition(
 }
 
 export const STATUS_LABELS: Record<OrderStatus, string> = {
-  [OrderStatus.NEW]: 'New',
+  [OrderStatus.QUOTATION]: 'Quotation (Not Confirmed)',
+  [OrderStatus.CONFIRMED]: 'Confirmed',
+  [OrderStatus.REJECTED]: 'Rejected',
   [OrderStatus.SAMPLE_RECEIVED]: 'Sample Received',
   [OrderStatus.CAD_DRAWING_READY]: 'CAD Drawing Ready',
   [OrderStatus.SENT_TO_FACTORY]: 'Sent to Factory',

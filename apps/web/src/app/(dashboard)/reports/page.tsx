@@ -35,7 +35,8 @@ interface InactiveCustomerRow {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  NEW: 'bg-blue-500',
+  QUOTATION: 'bg-amber-500',
+  CONFIRMED: 'bg-blue-500',
   SAMPLE_RECEIVED: 'bg-purple-500',
   CAD_DRAWING_READY: 'bg-indigo-500',
   SENT_TO_FACTORY: 'bg-orange-500',
@@ -45,6 +46,7 @@ const STATUS_COLORS: Record<string, string> = {
   RECEIVED_LOCALLY: 'bg-emerald-500',
   SHIPPED_TO_CUSTOMER: 'bg-sky-500',
   COMPLETED: 'bg-green-500',
+  REJECTED: 'bg-gray-400',
 };
 
 export default function ReportsPage() {

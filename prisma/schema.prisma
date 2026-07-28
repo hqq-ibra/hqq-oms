@@ -208,6 +208,7 @@ model Product {
   specs          Json?
   notes          String?
   inventory      Int      @default(0)
+  requiresLineSpecs Boolean  @default(false) @map("requires_line_specs")
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -239,13 +240,14 @@ model CustomerProduct {
 
 model Order {
   id                   String    @id @default(cuid())
-  orderNumber          String    @unique @map("order_number")
-  factoryOrderNumber   String    @unique @map("factory_order_number")
+  orderNumber          String?   @unique @map("order_number")
+  factoryOrderNumber   String?   @unique @map("factory_order_number")
+  quoteNumber          String?   @unique @map("quote_number")
   orderType            String    @map("order_type")
   customerId           String    @map("customer_id")
   productId            String?   @map("product_id")
   factoryId            String?   @map("factory_id")
-  status               String    @default("NEW")
+  status               String    @default("QUOTATION")
   assignedUserId       String?   @map("assigned_user_id")
   expectedDeliveryDate DateTime? @map("expected_delivery_date")
   shippingCompany      String?   @map("shipping_company")
@@ -255,6 +257,7 @@ model Order {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   completedAt          DateTime? @map("completed_at")
+  confirmedAt          DateTime? @map("confirmed_at")
 
   customer      Customer             @relation(fields: [customerId], references: [id])
   product       Product?             @relation(fields: [productId], references: [id])
@@ -263,6 +266,7 @@ model Order {
   items         OrderItem[]
   costs         OrderCost[]
   statusHistory OrderStatusHistory[]
+  quotation     OrderQuotation?
 
   @@index([status])
   @@index([customerId])
@@ -272,16 +276,23 @@ model Order {
 }
 
 model OrderItem {
-  id        String   @id @default(cuid())
-  orderId   String   @map("order_id")
-  productId String   @map("product_id")
-  quantity  Int      @default(1)
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id @default(cuid())
+  orderId     String   @map("order_id")
+  productId   String   @map("product_id")
+  quantity    Int      @default(1)
+  unitPrice   Decimal? @map("unit_price") @db.Decimal(14, 2)
+  unitLabel   String   @default("عدد") @map("unit_label")
+  description String?
+  orderIndex  Int      @default(0) @map("order_index")
+  specs       Json?
+  drawingNumber     String? @map("drawing_number")
+  promotedProductId String? @map("promoted_product_id")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
-  @@unique([orderId, productId])
+  @@index([orderId])
   @@map("order_items")
 }
 
@@ -315,6 +326,28 @@ model OrderStatusHistory {
 
   @@index([orderId])
   @@map("order_status_history")
+}
+
+model OrderQuotation {
+  id             String    @id @default(cuid())
+  orderId        String    @unique @map("order_id")
+  quoteDate      DateTime  @default(now()) @map("quote_date")
+  validUntil     DateTime? @map("valid_until")
+  payMethod      String    @default("نقداً / تحويل بنكي") @map("pay_method")
+  clientBlock    String    @default("") @map("client_block")
+  contact        String?
+  attn           String?
+  notes          String?
+  discountAmount Decimal   @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  vatEnabled     Boolean   @default(true) @map("vat_enabled")
+  vatPercent     Decimal   @default(15) @map("vat_percent") @db.Decimal(5, 2)
+  language       String    @default("ar")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_quotations")
 }
 
 // ─── Files ───

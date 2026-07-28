@@ -1,5 +1,6 @@
 const NEW_MOLD_FLOW = [
-  'NEW',
+  'QUOTATION',
+  'CONFIRMED',
   'SAMPLE_RECEIVED',
   'CAD_DRAWING_READY',
   'SENT_TO_FACTORY',
@@ -12,7 +13,8 @@ const NEW_MOLD_FLOW = [
 ] as const;
 
 const REPEAT_FLOW = [
-  'NEW',
+  'QUOTATION',
+  'CONFIRMED',
   'SENT_TO_FACTORY',
   'SILICONE_CASTING',
   'SHIPPED_FROM_FACTORY',
@@ -26,6 +28,12 @@ const FLOWS: Record<string, readonly string[]> = {
   REPEAT: REPEAT_FLOW,
 };
 
+/**
+ * A quote the customer declined. Off-flow and terminal: it is in neither flow
+ * array, so nothing transitions out of it.
+ */
+export const REJECTED = 'REJECTED';
+
 export function isValidTransition(
   orderType: string,
   currentStatus: string,
@@ -33,6 +41,9 @@ export function isValidTransition(
 ): boolean {
   const flow = FLOWS[orderType];
   if (!flow) return false;
+
+  // The one exception to the linear rule: a quotation can be declined.
+  if (currentStatus === 'QUOTATION' && newStatus === REJECTED) return true;
 
   const currentIdx = flow.indexOf(currentStatus);
   const newIdx = flow.indexOf(newStatus);

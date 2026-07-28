@@ -18,7 +18,8 @@ import {
 interface OrderListResponse {
   data: Array<{
     id: string;
-    orderNumber: string;
+    orderNumber: string | null;
+    quoteNumber: string | null;
     status: string;
     expectedDeliveryDate: string | null;
     customer?: { name: string };
@@ -202,7 +203,7 @@ export default function DashboardPage() {
                       className="border-b border-gray-100 text-sm"
                     >
                       <td className="py-3 font-medium text-gray-900">
-                        {order.orderNumber}
+                        {order.orderNumber ?? order.quoteNumber ?? '—'}
                       </td>
                       <td className="py-3 text-gray-600">
                         {order.customer?.name ?? '—'}
@@ -256,7 +257,7 @@ export default function DashboardPage() {
                 >
                   <div>
                     <p className="font-medium text-gray-900">
-                      {order.orderNumber}
+                      {order.orderNumber ?? order.quoteNumber ?? '—'}
                     </p>
                     <p className="text-sm text-gray-500">
                       {order.customer?.name ?? '—'} •{' '}
